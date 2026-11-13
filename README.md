@@ -1,6 +1,14 @@
 # 清场助手（OneClickClose）
 
+[![build](https://github.com/baozifei123/OneClickClose/actions/workflows/build.yml/badge.svg)](https://github.com/baozifei123/OneClickClose/actions/workflows/build.yml)
+
 Windows 上的批量关闭小工具：按热键弹出当前程序清单，勾选后一键关闭；需要时可以把没有窗口、躲在托盘或后台的程序一起彻底退出。
+
+## 下载
+
+- [GitHub Releases](https://github.com/baozifei123/OneClickClose/releases)
+- 推荐：`OneClickClose-Setup-1.0.0.exe`（按用户安装，中文向导，可选开机启动）
+- 便携：`OneClickClose-Portable-1.0.0.zip`（解压后运行 `OneClickClose.exe`）
 
 项目现在包含两个版本：
 
