@@ -54,7 +54,27 @@ namespace OneClickClose
             }
 
             string error;
-            return SetEnabled(true, out error, startupDirectory);
+            if (SetEnabled(true, out error, startupDirectory))
+            {
+                return true;
+            }
+
+            // Headless/CI sessions may not have WScript.Shell. Renaming the valid
+            // legacy shortcut preserves the startup entry without COM.
+            try
+            {
+                if (File.Exists(path))
+                {
+                    DeleteFile(legacyPath);
+                    return true;
+                }
+                File.Move(legacyPath, path);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static bool SetEnabled(bool enabled, out string error)
