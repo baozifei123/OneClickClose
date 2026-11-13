@@ -1,0 +1,20 @@
+bin/
+obj/
+dist/
+*.user
+*.suo
+.vs/
+TestResults/
+ui-test.png
+
+# 本机用户数据
+config.json
+config.json.bak
+config.json.pre-restore-*
+OneClickClose-error.log
+
+# CodeGraph 与内部规划文件
+.codegraph/
+task_plan.md
+findings.md
+progress.md

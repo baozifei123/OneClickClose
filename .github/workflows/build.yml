@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.SIGNING_CERTIFICATE_BASE64 != '' && 'true' || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore and test
+        run: dotnet test .\tests\OneClickClose.Tests\OneClickClose.Tests.csproj -c Release
+
+      - name: Publish portable app
+        run: >
+          dotnet publish .\src\OneClickClose.App\OneClickClose.App.csproj
+          -c Release -o .\dist\app
+          -p:DebugType=None -p:DebugSymbols=false
+
+      - name: Create portable zip
+        shell: pwsh
+        run: Compress-Archive -Path .\dist\app\* -DestinationPath .\dist\OneClickClose-Portable-1.0.0.zip -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .\dist\installer | Out-Null
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          & $iscc .\installer\OneClickClose.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compile failed" }
+
+      - name: Sign artifacts (optional)
+        if: env.HAS_SIGNING_CERT == 'true'
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "oneclickclose-signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+          .\scripts\sign.ps1 -PfxPath $pfx -PfxPassword $env:SIGNING_CERTIFICATE_PASSWORD
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneClickClose
+          path: |
+            dist/app/**
+            dist/OneClickClose-Portable-1.0.0.zip
+            dist/installer/**
+          if-no-files-found: error

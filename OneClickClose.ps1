@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    一键收摊：按热键唤出程序清单，勾选后批量关闭。
+    清场助手：按热键唤出程序清单，勾选后批量关闭。
 .DESCRIPTION
     两种模式：
       1. 只关窗口（保留托盘）：向窗口发送 WM_CLOSE，等效于点 X。
@@ -21,6 +21,8 @@
     启动测试窗口，验证彻底退出预览包含 PID 且取消时不会关闭目标。
 .PARAMETER ConfigTest
     在隔离临时目录验证旧配置迁移、预设保存、原子备份与恢复，不改实际 config.json。
+.PARAMETER TaskbarTest
+    验证普通窗口/工具窗口的任务栏资格判断，以及“显示所有窗口”过滤开关。
 .PARAMETER Hidden
     启动后只驻留托盘，不显示面板。
 #>
@@ -32,6 +34,7 @@ param(
     [switch]$RefreshTest,
     [switch]$SafetyTest,
     [switch]$ConfigTest,
+    [switch]$TaskbarTest,
     [switch]$Hidden
 )
 
@@ -53,6 +56,7 @@ public class AppWindow
     public string Title;
     public uint ProcessId;
     public bool IsMinimized;
+    public bool IsTaskbarWindow;
 }
 
 public static class NativeMethods
@@ -63,6 +67,12 @@ public static class NativeMethods
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_SHIFT = 0x0004;
     public const uint MOD_WIN = 0x0008;
+
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_APPWINDOW = 0x00040000;
+    public const uint GW_OWNER = 4;
+    public const int DWMWA_CLOAKED = 14;
 
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -102,6 +112,51 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    public static bool IsTaskbarEligibleWindow(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero || !IsWindowVisible(hWnd)) return false;
+        if (GetWindowTextLength(hWnd) <= 0) return false;
+
+        int extendedStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+        bool appWindow = (extendedStyle & WS_EX_APPWINDOW) != 0;
+        bool toolWindow = (extendedStyle & WS_EX_TOOLWINDOW) != 0;
+        if (toolWindow && !appWindow) return false;
+        if (GetWindow(hWnd, GW_OWNER) != IntPtr.Zero && !appWindow) return false;
+
+        try
+        {
+            int cloaked;
+            if (DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return false;
+        }
+        catch
+        {
+        }
+
+        StringBuilder className = new StringBuilder(256);
+        GetClassName(hWnd, className, className.Capacity);
+        string windowClass = className.ToString();
+        if (windowClass == "Shell_TrayWnd" ||
+            windowClass == "Shell_SecondaryTrayWnd" ||
+            windowClass == "Progman" ||
+            windowClass == "WorkerW")
+        {
+            return false;
+        }
+        return true;
+    }
+
     public static List<AppWindow> GetVisibleWindows()
     {
         List<AppWindow> result = new List<AppWindow>();
@@ -125,6 +180,7 @@ public static class NativeMethods
             window.Title = title;
             window.ProcessId = pid;
             window.IsMinimized = IsIconic(hWnd);
+            window.IsTaskbarWindow = IsTaskbarEligibleWindow(hWnd);
             result.Add(window);
             return true;
         }, IntPtr.Zero);
@@ -198,9 +254,13 @@ $script:Config = [ordered]@{
     hotkey                 = 'Ctrl+Alt+X'
     gracefulTimeoutSeconds = 5
     protectedProcesses     = @()
+    protectedPaths         = @()
     lastMode               = 'windows'
     profiles               = [ordered]@{}
     activeProfile          = ''
+    showAllWindows         = $false
+    includeChildProcesses  = $true
+    includeSuspendedUwp    = $false
 }
 $script:LastConfigSaveSucceeded = $false
 $script:ConfigSaveError = $null
@@ -244,9 +304,13 @@ function Save-Config {
             hotkey                 = [string]$script:Config.hotkey
             gracefulTimeoutSeconds = [int]$script:Config.gracefulTimeoutSeconds
             protectedProcesses     = @($script:Config.protectedProcesses)
+            protectedPaths         = @($script:Config.protectedPaths | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
             lastMode               = [string]$script:Config.lastMode
             profiles               = $profilePayload
             activeProfile          = [string]$script:Config.activeProfile
+            showAllWindows         = [bool]$script:Config.showAllWindows
+            includeChildProcesses  = [bool]$script:Config.includeChildProcesses
+            includeSuspendedUwp    = [bool]$script:Config.includeSuspendedUwp
         }
         $json = $payload | ConvertTo-Json -Depth 8
         $encoding = New-Object System.Text.UTF8Encoding($true)
@@ -292,9 +356,13 @@ function Load-Config {
             hotkey                 = 'Ctrl+Alt+X'
             gracefulTimeoutSeconds = 5
             protectedProcesses     = @()
+            protectedPaths         = @()
             lastMode               = 'windows'
             profiles               = [ordered]@{}
             activeProfile          = ''
+            showAllWindows         = $false
+            includeChildProcesses  = $true
+            includeSuspendedUwp    = $false
         }
     }
     $script:ConfigLoadError = $null
@@ -314,6 +382,18 @@ function Load-Config {
         }
         if ($null -ne $data.protectedProcesses) {
             $script:Config.protectedProcesses = @($data.protectedProcesses | ForEach-Object { [string]$_ })
+        }
+        if ($null -ne $data.protectedPaths) {
+            $script:Config.protectedPaths = @($data.protectedPaths | ForEach-Object { [string]$_ })
+        }
+        if ($null -ne $data.showAllWindows) {
+            $script:Config.showAllWindows = [bool]$data.showAllWindows
+        }
+        if ($null -ne $data.includeChildProcesses) {
+            $script:Config.includeChildProcesses = [bool]$data.includeChildProcesses
+        }
+        if ($null -ne $data.includeSuspendedUwp) {
+            $script:Config.includeSuspendedUwp = [bool]$data.includeSuspendedUwp
         }
         if ($data.lastMode -eq 'all' -or $data.lastMode -eq 'windows') {
             $script:Config.lastMode = [string]$data.lastMode
@@ -651,6 +731,7 @@ function Get-AppCandidates {
             Titles       = $titles
             Protected    = $isProtected
             IsForeground = ($kind -eq '前台')
+            IsTaskbarApp = (@($appWindows | Where-Object { $_.IsTaskbarWindow }).Count -gt 0)
         }
         [void]$apps.Add($app)
     }
@@ -671,10 +752,12 @@ function Get-AppCandidates {
         $windowCount = 0
         $isForeground = $false
         $allProtected = $true
+        $groupIsTaskbar = $false
         foreach ($member in $members) {
             $windowCount += [int]$member.WindowCount
             if ($member.IsForeground) { $isForeground = $true }
             if (-not $member.Protected) { $allProtected = $false }
+            if ($member.IsTaskbarApp) { $groupIsTaskbar = $true }
             foreach ($memberWindow in @($member.Windows)) { [void]$groupWindows.Add($memberWindow) }
             if (-not [string]::IsNullOrWhiteSpace($member.Titles) -and -not ($titleParts -contains $member.Titles)) {
                 [void]$titleParts.Add($member.Titles)
@@ -699,6 +782,7 @@ function Get-AppCandidates {
             Titles       = $groupTitles
             Protected    = $allProtected
             IsForeground = $isForeground
+            IsTaskbarApp = $groupIsTaskbar
         })
     }
 
@@ -719,6 +803,7 @@ $script:StatusLabel = $null
 $script:SearchBox = $null
 $script:RadioWindows = $null
 $script:RadioAll = $null
+$script:ShowAllWindowsCheck = $null
 $script:RefreshButton = $null
 $script:CloseButton = $null
 $script:ProtectSelectedButton = $null
@@ -780,8 +865,20 @@ function Apply-Filter {
     if ($null -eq $script:Grid) { return }
     $text = ''
     if ($null -ne $script:SearchBox) { $text = $script:SearchBox.Text.Trim() }
+    $showAllWindows = $true
+    if ($null -ne $script:ShowAllWindowsCheck) { $showAllWindows = [bool]$script:ShowAllWindowsCheck.Checked }
+
     foreach ($row in $script:Grid.Rows) {
         if ($null -eq $row.Tag) { continue }
+
+        $isTaskbarApp = $true
+        $taskbarProperty = $row.Tag.PSObject.Properties['IsTaskbarApp']
+        if ($null -ne $taskbarProperty) { $isTaskbarApp = [bool]$taskbarProperty.Value }
+        if (-not $showAllWindows -and -not $isTaskbarApp) {
+            $row.Visible = $false
+            continue
+        }
+
         if ([string]::IsNullOrWhiteSpace($text)) {
             $row.Visible = $true
             continue
@@ -789,6 +886,7 @@ function Apply-Filter {
         $haystack = "$($row.Tag.DisplayName) $($row.Tag.Name) $($row.Tag.Titles)"
         $row.Visible = $haystack.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
     }
+    Update-SelectionStatus
 }
 
 function Update-AppListRows {
@@ -1010,7 +1108,8 @@ function Complete-AppListRefresh {
         $script:LastRefreshRenderMs = $renderWatch.ElapsedMilliseconds
         Restore-RefreshUi -LockedCells $state.LockedCells
         $script:LastRefreshSucceeded = $true
-        $script:StatusLabel.Text = "扫描完成：$($apps.Count) 个候选程序，用时 $($script:LastRefreshDurationMs)ms"
+        $visibleCount = @($script:Grid.Rows | Where-Object { $_.Visible }).Count
+        $script:StatusLabel.Text = "扫描完成：显示 $visibleCount 个程序（候选 $($apps.Count) 个），用时 $($script:LastRefreshDurationMs)ms"
     } catch {
         Restore-RefreshUi -LockedCells $state.LockedCells
         $script:StatusLabel.Text = "更新清单失败，保留当前清单：$($_.Exception.Message)"
@@ -1731,7 +1830,7 @@ function Save-ProtectionProfile {
         }
     }
     if ($null -ne $existingName) {
-        if (-not (Confirm-ProfileAction -Message "保护预设【$existingName】已存在，是否覆盖？" -Title '一键收摊')) { return }
+        if (-not (Confirm-ProfileAction -Message "保护预设【$existingName】已存在，是否覆盖？" -Title '清场助手')) { return }
         $name = $existingName
     }
 
@@ -1877,7 +1976,7 @@ function Initialize-Ui {
     $baseFont = New-Object System.Drawing.Font -ArgumentList @('Microsoft YaHei UI', [single]9)
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = '一键收摊 — 选择要关闭的程序'
+    $form.Text = '清场助手 — 选择要关闭的程序'
     $form.StartPosition = 'CenterScreen'
     $form.Size = New-Object System.Drawing.Size(1040, 640)
     $form.MinimumSize = New-Object System.Drawing.Size(860, 440)
@@ -1968,6 +2067,13 @@ function Initialize-Ui {
     $script:RadioAll.AutoSize = $true
     $script:RadioAll.Margin = New-Object System.Windows.Forms.Padding(0, 4, 20, 0)
     [void]$top.Controls.Add($script:RadioAll)
+
+    $script:ShowAllWindowsCheck = New-Object System.Windows.Forms.CheckBox
+    $script:ShowAllWindowsCheck.Text = '显示所有窗口'
+    $script:ShowAllWindowsCheck.AutoSize = $true
+    $script:ShowAllWindowsCheck.Margin = New-Object System.Windows.Forms.Padding(0, 4, 14, 0)
+    $script:ShowAllWindowsCheck.Checked = $false
+    [void]$top.Controls.Add($script:ShowAllWindowsCheck)
 
     $filterLabel = New-Object System.Windows.Forms.Label
     $filterLabel.Text = '筛选：'
@@ -2180,6 +2286,7 @@ function Initialize-Ui {
     $selectAllButton.Add_Click({ Select-AllVisible })
     $selectNoneButton.Add_Click({ Select-None })
     $script:SearchBox.Add_TextChanged({ Apply-Filter })
+    $script:ShowAllWindowsCheck.Add_CheckedChanged({ Apply-Filter })
 
     $script:RadioWindows.Add_CheckedChanged({
         if ($script:RadioWindows.Checked -and $script:UiReady) { Set-Mode -Mode 'windows' }
@@ -2228,7 +2335,7 @@ function Initialize-Ui {
 function Initialize-Tray {
     $notify = New-Object System.Windows.Forms.NotifyIcon
     $notify.Icon = [System.Drawing.SystemIcons]::Application
-    $notify.Text = '一键收摊'
+    $notify.Text = '清场助手'
     $notify.Visible = $true
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -2260,7 +2367,7 @@ function Initialize-Hotkey {
                 try {
                     $script:NotifyIcon.ShowBalloonTip(
                         5000,
-                        '一键收摊',
+                        '清场助手',
                         "热键 $($script:Config.hotkey) 注册失败（可能被占用）。请从托盘图标打开，或修改 config.json 里的 hotkey。",
                         [System.Windows.Forms.ToolTipIcon]::Warning)
                 } catch { }
@@ -2273,7 +2380,7 @@ function Initialize-Hotkey {
             try {
                 $script:NotifyIcon.ShowBalloonTip(
                     5000,
-                    '一键收摊',
+                    '清场助手',
                     '热键注册失败，请从托盘图标打开，或修改 config.json 里的 hotkey。',
                     [System.Windows.Forms.ToolTipIcon]::Warning)
             } catch { }
@@ -2283,7 +2390,7 @@ function Initialize-Hotkey {
 
 function Exit-App {
     if ($script:Busy) {
-        [void][System.Windows.Forms.MessageBox]::Show('正在执行关闭，请稍候再退出。', '一键收摊', 'OK', 'Information')
+        [void][System.Windows.Forms.MessageBox]::Show('正在执行关闭，请稍候再退出。', '清场助手', 'OK', 'Information')
         return
     }
     $script:ReallyExit = $true
@@ -2606,6 +2713,7 @@ if ($SafetyTest) {
             Titles = $titles
             Protected = $false
             IsForeground = $false
+            IsTaskbarApp = $true
         }
         $rowIndex = $script:Grid.Rows.Add()
         $row = $script:Grid.Rows[$rowIndex]
@@ -2897,6 +3005,93 @@ if ($RefreshTest) {
     exit 0
 }
 
+if ($TaskbarTest) {
+    try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
+    $testError = $null
+    $normalEligible = $false
+    $toolExcluded = $false
+    $filterDefault = $false
+    $filterShowAll = $false
+
+    try {
+        Initialize-Ui
+        $script:Form.Opacity = 0
+        $script:Form.Show()
+        [System.Windows.Forms.Application]::DoEvents()
+
+        $normalForm = New-Object System.Windows.Forms.Form
+        $normalForm.Text = 'OneClickClose Taskbar Test'
+        $normalForm.ShowInTaskbar = $true
+        $normalForm.Opacity = 0
+        $normalForm.Show()
+        [System.Windows.Forms.Application]::DoEvents()
+        $normalEligible = [NativeMethods]::IsTaskbarEligibleWindow($normalForm.Handle)
+        $normalForm.Hide()
+        $normalForm.Dispose()
+
+        $toolForm = New-Object System.Windows.Forms.Form
+        $toolForm.Text = 'OneClickClose Tool Test'
+        $toolForm.ShowInTaskbar = $false
+        $toolForm.Opacity = 0
+        $toolForm.Show()
+        [System.Windows.Forms.Application]::DoEvents()
+        $toolExcluded = -not [NativeMethods]::IsTaskbarEligibleWindow($toolForm.Handle)
+        $toolForm.Hide()
+        $toolForm.Dispose()
+
+        $script:Grid.Rows.Clear()
+        $taskbarRowIndex = $script:Grid.Rows.Add()
+        $taskbarRow = $script:Grid.Rows[$taskbarRowIndex]
+        $taskbarRow.Tag = [PSCustomObject]@{
+            DisplayName = 'Taskbar App'
+            Name = 'taskbar-app'
+            Titles = 'Taskbar'
+            IsTaskbarApp = $true
+            Protected = $false
+            Kind = '窗口'
+        }
+        $taskbarRow.Cells[2].Value = 'Taskbar App'
+
+        $toolRowIndex = $script:Grid.Rows.Add()
+        $toolRow = $script:Grid.Rows[$toolRowIndex]
+        $toolRow.Tag = [PSCustomObject]@{
+            DisplayName = 'Tool App'
+            Name = 'tool-app'
+            Titles = 'Tool'
+            IsTaskbarApp = $false
+            Protected = $false
+            Kind = '窗口'
+        }
+        $toolRow.Cells[2].Value = 'Tool App'
+
+        $script:ShowAllWindowsCheck.Checked = $false
+        Apply-Filter
+        $filterDefault = $taskbarRow.Visible -and (-not $toolRow.Visible)
+
+        $script:ShowAllWindowsCheck.Checked = $true
+        Apply-Filter
+        $filterShowAll = $taskbarRow.Visible -and $toolRow.Visible
+    } catch {
+        $testError = $_.Exception.Message
+    } finally {
+        if ($null -ne $script:ShowAllWindowsCheck) { try { $script:ShowAllWindowsCheck.Checked = $false } catch { } }
+        if ($null -ne $script:Form) { try { $script:Form.Hide(); $script:Form.Dispose() } catch { } }
+    }
+
+    if ($null -ne $testError) {
+        Write-Host "FAIL：$testError"
+        exit 1
+    }
+    $verdict = 'PASS'
+    if (-not $normalEligible) { $verdict = 'FAIL：普通窗口未被识别为任务栏程序' }
+    if (-not $toolExcluded) { $verdict = 'FAIL：工具窗口未被排除' }
+    if (-not $filterDefault) { $verdict = 'FAIL：默认过滤未隐藏非任务栏程序' }
+    if (-not $filterShowAll) { $verdict = 'FAIL：勾选显示所有窗口后未恢复全部行' }
+    Write-Host ("{0}：普通窗口={1}，工具窗口排除={2}，默认过滤={3}，显示全部={4}" -f $verdict, $normalEligible, $toolExcluded, $filterDefault, $filterShowAll)
+    if ($verdict -ne 'PASS') { exit 1 }
+    exit 0
+}
+
 if ($UiTest) {
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     Initialize-Ui
@@ -2931,7 +3126,7 @@ try {
     $ownsMutex = $false
 }
 if (-not $ownsMutex) {
-    [void][System.Windows.Forms.MessageBox]::Show('一键收摊已经在运行了（请看系统托盘）。', '一键收摊', 'OK', 'Information')
+    [void][System.Windows.Forms.MessageBox]::Show('清场助手已经在运行了（请看系统托盘）。', '清场助手', 'OK', 'Information')
     exit 0
 }
 
