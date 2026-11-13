@@ -210,8 +210,10 @@ function Save-Config {
     $script:LastConfigSaveSucceeded = $false
     $script:ConfigSaveError = $null
     $configTempPath = $script:ConfigPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $configReplaceBackupPath = $script:ConfigPath + '.replace-' + [guid]::NewGuid().ToString('N') + '.tmp'
     $backupPath = $script:ConfigPath + '.bak'
     $backupTempPath = $backupPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $backupReplaceBackupPath = $backupPath + '.replace-' + [guid]::NewGuid().ToString('N') + '.tmp'
 
     try {
         $profilePayload = [ordered]@{}
@@ -254,11 +256,11 @@ function Save-Config {
             # Stage a complete copy of the previous config before atomically replacing either file.
             [System.IO.File]::Copy($script:ConfigPath, $backupTempPath, $false)
             if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
-                [System.IO.File]::Replace($backupTempPath, $backupPath, $null, $true)
+                [System.IO.File]::Replace($backupTempPath, $backupPath, $backupReplaceBackupPath, $true)
             } else {
                 [System.IO.File]::Move($backupTempPath, $backupPath)
             }
-            [System.IO.File]::Replace($configTempPath, $script:ConfigPath, $null, $true)
+            [System.IO.File]::Replace($configTempPath, $script:ConfigPath, $configReplaceBackupPath, $true)
         } else {
             [System.IO.File]::Move($configTempPath, $script:ConfigPath)
         }
@@ -273,7 +275,7 @@ function Save-Config {
             $script:StatusLabel.Text = "配置保存失败：$($script:ConfigSaveError)"
         }
     } finally {
-        foreach ($tempPath in @($configTempPath, $backupTempPath)) {
+        foreach ($tempPath in @($configTempPath, $configReplaceBackupPath, $backupTempPath, $backupReplaceBackupPath)) {
             if (Test-Path -LiteralPath $tempPath -PathType Leaf) {
                 try { Remove-Item -LiteralPath $tempPath -Force } catch { }
             }
@@ -796,15 +798,16 @@ function Update-AppListRows {
     $script:SuppressGridEvents = $true
     $script:Grid.SuspendLayout()
     try {
-        $script:Grid.Rows.Clear()
+        # Prepare detached rows first so a construction failure leaves the current list intact.
+        $preparedRows = New-Object System.Collections.ArrayList
         foreach ($app in $Apps) {
             $icon = $script:GenericAppIcon
             if ($app.WindowCount -gt 0) {
                 $windowIcon = Get-AppIcon -Path $app.Path
                 if ($null -ne $windowIcon) { $icon = $windowIcon }
             }
-            $rowIndex = $script:Grid.Rows.Add()
-            $row = $script:Grid.Rows[$rowIndex]
+            $row = New-Object System.Windows.Forms.DataGridViewRow
+            $row.CreateCells($script:Grid)
             $row.Tag = $app
             $row.Cells[0].Value = $false
             $row.Cells[1].Value = $icon
@@ -832,6 +835,13 @@ function Update-AppListRows {
             if ($app.IsForeground -and -not $app.Protected) {
                 $row.DefaultCellStyle.Font = $script:BoldFont
             }
+            [void]$preparedRows.Add($row)
+        }
+
+        $script:Grid.Rows.Clear()
+        if ($preparedRows.Count -gt 0) {
+            $preparedArray = [System.Windows.Forms.DataGridViewRow[]]$preparedRows.ToArray()
+            $script:Grid.Rows.AddRange($preparedArray)
         }
         Apply-Filter
         Update-SelectionStatus
@@ -1559,6 +1569,11 @@ function Protect-Selected {
     }
 
     $count = Set-ProcessProtectionState -ProcessNames @($selectedNames.ToArray()) -Protect $true
+    if (-not $script:LastConfigSaveSucceeded) {
+        $script:StatusLabel.ForeColor = [System.Drawing.Color]::Firebrick
+        $script:StatusLabel.Text = "保护名单未保存，已撤销更改：$($script:ConfigSaveError)"
+        return
+    }
     $script:StatusLabel.ForeColor = [System.Drawing.Color]::DimGray
     $script:StatusLabel.Text = "已将 $count 个程序名称加入保护名单（同名实例一起保护）"
 }
@@ -2392,8 +2407,10 @@ if ($ConfigTest) {
     $migrationWritten = $false
     $profileSaved = $false
     $profileApplied = $false
+    $profileDeleted = $false
     $backupRestored = $false
     $restorePointPreserved = $false
+    $protectSaveFailureHandled = $false
 
     try {
         [void][System.IO.Directory]::CreateDirectory($testRoot)
@@ -2443,10 +2460,6 @@ if ($ConfigTest) {
         $script:Config.protectedProcesses = @('newer-state')
         $script:Config.activeProfile = ''
         Save-Config
-        $script:ProfileTestDecision = 'Yes'
-        $script:ProfileCombo.SelectedItem = '工作'
-        $script:ProfileDeleteButton.PerformClick()
-        $profileDeleted = -not $script:Config.profiles.Contains('工作')
 
         $backupProfileData = (Get-Content -LiteralPath $firstBackupPath -Raw -Encoding UTF8) | ConvertFrom-Json
         $backupHasProfileAndLegacyNames = ($backupProfileData.schemaVersion -eq 2) -and
@@ -2464,6 +2477,43 @@ if ($ConfigTest) {
             $restorePointData = (Get-Content -LiteralPath $restorePoints[0].FullName -Raw -Encoding UTF8) | ConvertFrom-Json
             $restorePointPreserved = (@($restorePointData.protectedProcesses) -contains 'newer-state')
         }
+
+        $script:ProfileTestDecision = 'Yes'
+        $script:ProfileCombo.SelectedItem = '工作'
+        $script:ProfileDeleteButton.PerformClick()
+        $deletedNames = @($script:Config.protectedProcesses | ForEach-Object { Normalize-ProcessName $_ } | Sort-Object)
+        $profileDeleted = (-not $script:Config.profiles.Contains('工作')) -and
+                          (($deletedNames -join ',') -eq 'legacy-alpha,legacy-beta')
+
+        $protectTestRowIndex = $script:Grid.Rows.Add()
+        $protectTestRow = $script:Grid.Rows[$protectTestRowIndex]
+        $protectTestRow.Tag = [PSCustomObject]@{
+            ProcessId = 0
+            Name = 'write-failure-target'
+            DisplayName = '写入失败测试'
+            Path = ''
+            Windows = @()
+            WindowCount = 0
+            Kind = '后台'
+            Titles = ''
+            Protected = $false
+            IsForeground = $false
+        }
+        $protectTestRow.Cells[0].Value = $true
+        $protectTestRow.Cells[2].Value = '写入失败测试'
+        $protectTestRow.Cells[3].Value = 'write-failure-target'
+        $protectTestRow.Cells[4].Value = 0
+        $protectTestRow.Cells[5].Value = '后台'
+        $beforeProtectNames = @($script:Config.protectedProcesses | ForEach-Object { Normalize-ProcessName $_ } | Sort-Object) -join ','
+        $script:ConfigPath = Join-Path (Join-Path $testRoot 'missing-directory') 'config.json'
+        $script:ProtectSelectedButton.PerformClick()
+        $afterProtectNames = @($script:Config.protectedProcesses | ForEach-Object { Normalize-ProcessName $_ } | Sort-Object) -join ','
+        $protectSaveFailureHandled = (-not $script:LastConfigSaveSucceeded) -and
+                                     ($beforeProtectNames -eq $afterProtectNames) -and
+                                     (-not [bool]$protectTestRow.Tag.Protected) -and
+                                     ($protectTestRow.Cells[0].Value -eq $true) -and
+                                     ($script:StatusLabel.Text -like '保护名单未保存，已撤销更改：*')
+        $script:ConfigPath = Join-Path $testRoot 'config.json'
     } catch {
         $testError = $_.Exception.Message
     } finally {
@@ -2487,7 +2537,8 @@ if ($ConfigTest) {
     if (-not $profileSaved -or -not $profileApplied -or -not $profileDeleted) { $verdict = 'FAIL：保护预设保存/应用/删除流程异常' }
     if (-not $backupRestored) { $verdict = 'FAIL：配置备份未恢复旧名单与预设' }
     if (-not $restorePointPreserved) { $verdict = 'FAIL：恢复前配置未保存在时间戳恢复点' }
-    Write-Host ("{0}：旧配置兼容={1}，schema 迁移={2}，预设保存/应用/删除={3}/{4}/{5}，备份恢复={6}，恢复点={7}" -f $verdict, $legacyPreserved, $migrationWritten, $profileSaved, $profileApplied, $profileDeleted, $backupRestored, $restorePointPreserved)
+    if (-not $protectSaveFailureHandled) { $verdict = 'FAIL：保护名单保存失败时未回滚并显示错误' }
+    Write-Host ("{0}：旧配置兼容={1}，schema 迁移={2}，预设保存/应用/删除={3}/{4}/{5}，备份恢复={6}，恢复点={7}，保护保存失败回滚={8}" -f $verdict, $legacyPreserved, $migrationWritten, $profileSaved, $profileApplied, $profileDeleted, $backupRestored, $restorePointPreserved, $protectSaveFailureHandled)
     if ($verdict -ne 'PASS') { exit 1 }
     exit 0
 }
@@ -2631,7 +2682,8 @@ if ($ProtectRefreshTest) {
     try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch { }
     $originalConfig = $script:Config
     $originalConfigPath = $script:ConfigPath
-    $testConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) ('OneClickClose-ProtectRefreshTest-' + [guid]::NewGuid().ToString('N') + '.json')
+    $testConfigRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('OneClickClose-ProtectRefreshTest-' + [guid]::NewGuid().ToString('N'))
+    $testConfigPath = Join-Path $testConfigRoot 'config.json'
     $testError = $null
     $targetName = $null
     $actionElapsed = 0L
@@ -2641,6 +2693,7 @@ if ($ProtectRefreshTest) {
     $batchProtectionOk = $false
 
     try {
+        [void][System.IO.Directory]::CreateDirectory($testConfigRoot)
         $script:ConfigPath = $testConfigPath
         $script:Config = [ordered]@{
             hotkey                 = 'Ctrl+Alt+X'
@@ -2730,8 +2783,8 @@ if ($ProtectRefreshTest) {
         if ($null -ne $script:Form) { try { $script:Form.Hide(); $script:Form.Dispose() } catch { } }
         $script:Config = $originalConfig
         $script:ConfigPath = $originalConfigPath
-        if (Test-Path -LiteralPath $testConfigPath) {
-            try { Remove-Item -LiteralPath $testConfigPath -Force } catch { }
+        if (Test-Path -LiteralPath $testConfigRoot -PathType Container) {
+            try { Remove-Item -LiteralPath $testConfigRoot -Recurse -Force } catch { }
         }
     }
 

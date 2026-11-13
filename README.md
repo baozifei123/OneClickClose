@@ -6,10 +6,13 @@ Windows 11 上的批量关闭小工具：按热键弹出当前程序清单，勾
 ## 它能做什么
 
 - 全局热键唤出清单，按程序分组显示图标、进程名、窗口数、窗口标题
+- 刷新扫描在后台 Runspace 执行；刷新期间旧清单仍可见，扫描结束后再更新界面
+- 同一可执行文件路径的进程归为一项，勾选后处理组内全部实例；路径未知的进程按 PID 单独显示
 - 两种关闭模式：
   - **只关窗口（保留托盘）**：向可见窗口发送 `WM_CLOSE`，等效于点 X；程序愿意留在托盘就留着
-  - **彻底退出（含后台）**：先关窗口，超时后强制结束进程；没有窗口的后台程序直接结束
+  - **彻底退出（含后台）**：确认前列出具体应用、进程名、PID、窗口标题及将执行的关闭/强杀动作；确认后先请求关闭，超时再强杀
 - 保护名单：系统关键进程、脚本自身的父进程链不会出现在清单里；可右键单个加入/移出，也可勾选多个后点“保护选中”批量加入
+- 可保存、应用和删除命名保护预设；每次配置保存自动更新 `config.json.bak`，也可从界面恢复
 - 终端警告：勾选项里包含终端窗口时，状态栏变红提示
 - 热键可配置，配置保存在脚本同目录的 `config.json`
 
@@ -19,7 +22,9 @@ Windows 11 上的批量关闭小工具：按热键弹出当前程序清单，勾
 | --- | --- |
 | `OneClickClose.ps1` | 主程序 |
 | `Start-Hidden.vbs` | 无窗口启动，日常挂托盘用 |
-| `config.json` | 首次运行自动生成 |
+| `config.json` | 用户设置与保护名单；首次运行自动生成 |
+| `config.json.bak` | 每次配置保存前自动保留的上一份配置 |
+| `config.json.pre-restore-*` | 手动恢复备份前，自动保留的当前配置快照 |
 | `README.md` | 本文 |
 
 ## 快速开始
@@ -48,7 +53,9 @@ Windows 11 上的批量关闭小工具：按热键弹出当前程序清单，勾
 - 先向可见窗口发 `WM_CLOSE`，给程序 `gracefulTimeoutSeconds` 秒（默认 5 秒）保存和退出。
 - 超时后仍未退出的进程，执行强制结束（`Process.Kill()`）。
 - 没有可见窗口的后台程序没有优雅关闭通道，会在确认后直接强制结束。
-- 执行前会弹窗确认；未保存的内容可能丢失。
+- 执行前会显示本次目标的应用名、进程名、PID、窗口标题，以及“发送 `WM_CLOSE` 后等待并强杀”或“确认后直接强杀”等动作。取消时不会发送关闭消息。
+- 确认后，程序仍会在发送关闭消息和强杀前核对窗口句柄/进程 PID、进程名及可用路径，避免进程退出后 PID 被复用而误关其他程序。
+- 未保存内容可能丢失；只对你确认的程序使用此模式。
 
 ## 保护名单
 
@@ -66,25 +73,52 @@ Windows 11 上的批量关闭小工具：按热键弹出当前程序清单，勾
 
 `config.json` 里的 `protectedProcesses` 也可以直接编辑，写进程名即可（如 `"WeChat"`、`"DingTalk"`，带不带 `.exe` 都行）。
 
+### 命名保护预设
+
+第二条工具带提供保护预设下拉框及“应用”“保存当前名单”“删除”“恢复备份”按钮：
+
+- **保存当前名单**：输入预设名称，将当前 `protectedProcesses` 保存为一个可复用名单；覆盖同名预设会再次确认。
+- **应用**：确认后用该预设替换当前用户保护名单；只改变保护规则，不会关闭任何程序。
+- **删除**：只删除预设，不改变当前保护名单。
+- 手工加入/移出保护名单后，当前预设关联会清除；需要时可再保存为新预设。
+
+系统硬保护和脚本父进程链不受用户预设影响。
+
 ## 配置
 
 `config.json` 示例：
 
 ```json
 {
+  "schemaVersion": 2,
   "hotkey": "Ctrl+Alt+X",
   "gracefulTimeoutSeconds": 5,
   "protectedProcesses": [],
-  "lastMode": "windows"
+  "lastMode": "windows",
+  "profiles": {
+    "工作": ["teams", "outlook"]
+  },
+  "activeProfile": "工作"
 }
 ```
 
+- `schemaVersion`：当前为 `2`。旧格式（不含该字段、`profiles`）仍可读取；第一次保存时才写入 v2。
 - `hotkey`：支持 `Ctrl` / `Alt` / `Shift` / `Win` 组合，主键支持 `A-Z`、`0-9`、`F1-F24`。例如 `"Ctrl+Shift+Q"`。
 - `gracefulTimeoutSeconds`：优雅关闭的等待秒数，1–60。
-- `protectedProcesses`：用户保护名单，进程名数组。
+- `protectedProcesses`：当前用户保护名单，进程名数组；读取旧版配置时会原样保留。
 - `lastMode`：上次使用的模式，`windows` 或 `all`。
+- `profiles`：预设名称到进程名数组的映射。
+- `activeProfile`：当前关联预设的名称；手工修改保护名单后会清空。
 
-修改后重启程序生效（热键和超时在启动时读取）。删掉 `config.json` 会恢复默认值。
+每次保存新配置前，旧文件都会自动写入/轮换为同目录的 `config.json.bak`。旧格式配置在首次保存升级时也会作为备份保留。修改热键后需退出并重启程序生效；保护名单和预设会在当前界面立即更新。
+
+### 恢复配置备份
+
+1. 点击第二条工具带的“恢复备份”。没有 `config.json.bak` 时，该按钮不可用；先保存一次名单/预设即可生成备份。
+2. 确认恢复。程序先把当前配置保存为 `config.json.pre-restore-<时间戳>-<随机标识>`，再从 `.bak` 恢复。
+3. 恢复后的名单/预设立即读入；热键需要退出并重启程序生效。恢复点文件不会自动删除，可在程序退出后按需手动清理。
+
+不要在程序运行时同时手工编辑配置文件，以免下一次保存覆盖外部更改。
 
 ## 开机自启
 
@@ -93,16 +127,30 @@ Windows 11 上的批量关闭小工具：按热键弹出当前程序清单，勾
 ## 自检 / 测试
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -SelfTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -CloseTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -ProtectRefreshTest
-powershell -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -UiTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -SelfTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -RefreshTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -SafetyTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -ConfigTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -ProtectRefreshTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -CloseTest
+powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File .\OneClickClose.ps1 -UiTest
 ```
 
 - `-SelfTest`：输出现有窗口、两种模式的候选清单、热键注册与回调测试。
-- `-CloseTest`：启动系统自带的字符映射表并优雅关闭它，验证关闭链路。
-- `-ProtectRefreshTest`：使用临时配置触发真实的单项保护、取消保护和批量保护菜单/按钮操作，确认名单与界面状态同步且每次操作耗时小于 250ms；不会修改实际配置或关闭程序。
-- `-UiTest`：离屏构建界面并输出 `ui-test.png` 截图。
+- `-RefreshTest`：验证后台扫描期间 UI 消息循环仍响应、旧列表保留，以及模式切换后的扫描结果可更新。
+- `-SafetyTest`：启动两个系统字符映射表测试窗口，验证分组 PID 预览、取消不关闭、确认后关闭测试实例。
+- `-ConfigTest`：仅操作隔离临时目录，验证旧格式迁移、预设保存/应用/删除、备份恢复、恢复点和保存失败回滚；不会修改实际 `config.json`。
+- `-ProtectRefreshTest`：使用临时配置触发真实的单项保护、取消保护和批量保护操作，确认名单与界面状态同步且操作及时；不会修改实际配置或关闭程序。
+- `-CloseTest`：启动系统自带的测试程序并发送优雅关闭请求，验证关闭链路。
+- `-UiTest`：离屏构建界面并生成 `ui-test.png` 截图；验证后可手动删除该文件。
+
+以上 WinForms 测试建议在 Windows PowerShell 5.1 中使用 `-STA` 运行。
+
+## 未来 EXE 分发建议
+
+当前交付保持 PowerShell 5.1 + WinForms，不需要编译；日常使用 `Start-Hidden.vbs` 隐藏运行，或直接运行 `OneClickClose.ps1`。本轮没有生成 EXE。
+
+待功能和安全边界稳定后，建议迁移到原生 C# WinForms，再评估单文件发布、代码签名和版本升级流程；不建议仅用 ps2exe 把当前脚本包装起来作为长期发行版。
 
 ## 已知限制
 
