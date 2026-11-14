@@ -49,8 +49,6 @@ namespace OneClickClose
         private Button _closeButton;
         private Button _previewButton;
         private Button _protectSelectedButton;
-        private Button _selectAllButton;
-        private Button _selectNoneButton;
         private ComboBox _profileCombo;
         private Button _profileApplyButton;
         private Button _profileSaveButton;
@@ -66,6 +64,7 @@ namespace OneClickClose
         private ToolStripMenuItem _adminRestartItem;
         private NotifyIcon _trayIcon;
         private HotkeyWindow _hotkeyWindow;
+        private HotkeyWindow _closeHotkeyWindow;
         private Font _baseFont;
         private Font _boldFont;
         private Image _genericIcon;
@@ -74,6 +73,8 @@ namespace OneClickClose
         private bool _uiReady;
         private bool _busy;
         private bool _refreshing;
+        private bool _quickClosing;
+        private bool _showRequested;
         private bool _reallyExit;
         private bool _suppressGridEvents;
         private bool _suppressModeChange;
@@ -105,7 +106,17 @@ namespace OneClickClose
             return RefreshAsync(mode, NativeMethods.GetForegroundWindow(), true);
         }
 
+        internal void SyncProtectionForTest()
+        {
+            SyncVisibleProtectionState();
+        }
+
         public MainForm(ConfigStore configStore, bool startHidden)
+            : this(configStore, startHidden, true)
+        {
+        }
+
+        internal MainForm(ConfigStore configStore, bool startHidden, bool registerHotkeys)
         {
             if (configStore == null)
             {
@@ -120,7 +131,10 @@ namespace OneClickClose
 
             BuildUi();
             InitializeTray();
-            InitializeHotkey();
+            if (registerHotkeys)
+            {
+                InitializeHotkeys();
+            }
 
             _uiReady = true;
             RefreshProfileList();
@@ -160,6 +174,12 @@ namespace OneClickClose
                     try { _hotkeyWindow.Dispose(); }
                     catch { }
                     _hotkeyWindow = null;
+                }
+                if (_closeHotkeyWindow != null)
+                {
+                    try { _closeHotkeyWindow.Dispose(); }
+                    catch { }
+                    _closeHotkeyWindow = null;
                 }
                 if (_trayIcon != null)
                 {
@@ -343,6 +363,8 @@ namespace OneClickClose
             checkColumn.HeaderText = string.Empty;
             checkColumn.Width = 40;
             checkColumn.Name = "colCheck";
+            checkColumn.ReadOnly = true;
+            checkColumn.ToolTipText = "未保护的程序始终选中；如需排除，请加入保护名单。";
             _grid.Columns.Add(checkColumn);
 
             DataGridViewImageColumn iconColumn = new DataGridViewImageColumn();
@@ -448,20 +470,10 @@ namespace OneClickClose
             buttonPanel.Controls.Add(_previewButton);
 
             _protectSelectedButton = new Button();
-            _protectSelectedButton.Text = "保护选中";
+            _protectSelectedButton.Text = "保护显示项";
             _protectSelectedButton.AutoSize = true;
             _protectSelectedButton.Margin = new Padding(0, 0, 6, 0);
             buttonPanel.Controls.Add(_protectSelectedButton);
-
-            _selectNoneButton = new Button();
-            _selectNoneButton.Text = "全不选";
-            _selectNoneButton.AutoSize = true;
-            buttonPanel.Controls.Add(_selectNoneButton);
-
-            _selectAllButton = new Button();
-            _selectAllButton.Text = "全选";
-            _selectAllButton.AutoSize = true;
-            buttonPanel.Controls.Add(_selectAllButton);
 
             _gridMenu = new ContextMenuStrip();
             _protectItem = new ToolStripMenuItem("加入保护名单（永不关闭）");
@@ -478,9 +490,6 @@ namespace OneClickClose
             _gridMenu.Items.Add(_pathUnprotectItem);
             _grid.ContextMenuStrip = _gridMenu;
 
-            _grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
-            _grid.CellValueChanged += Grid_CellValueChanged;
-            _grid.CellDoubleClick += Grid_CellDoubleClick;
             _grid.CellMouseDown += Grid_CellMouseDown;
             _gridMenu.Opening += GridMenu_Opening;
             _protectItem.Click += delegate { ToggleContextProtection(true); };
@@ -498,8 +507,6 @@ namespace OneClickClose
             _profileSaveButton.Click += delegate { SaveProfile(); };
             _profileDeleteButton.Click += delegate { DeleteProfile(); };
             _profileRestoreButton.Click += delegate { RestoreBackup(); };
-            _selectAllButton.Click += delegate { SelectAllVisible(); };
-            _selectNoneButton.Click += delegate { SelectNone(); };
             _searchBox.TextChanged += delegate { ApplyFilter(); };
             _showAllWindowsCheckBox.CheckedChanged += delegate
             {
@@ -542,16 +549,28 @@ namespace OneClickClose
             };
 
             KeyDown += MainForm_KeyDown;
+            Resize += MainForm_Resize;
+        }
+
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            if (!_reallyExit && WindowState == FormWindowState.Minimized)
+            {
+                Hide();
+            }
         }
 
         private void MainForm_Shown(object sender, EventArgs e)
         {
-            if (_startedHidden)
+            if (_startedHidden && !_showRequested)
             {
                 Hide();
                 return;
             }
-            _ = RefreshAsync(_currentMode, NativeMethods.GetForegroundWindow(), true);
+            if (!_showRequested && !_quickClosing)
+            {
+                _ = RefreshAsync(_currentMode, NativeMethods.GetForegroundWindow(), true);
+            }
         }
 
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
@@ -585,20 +604,20 @@ namespace OneClickClose
             await RefreshAsync(mode, NativeMethods.GetForegroundWindow(), true);
         }
 
-        private async Task RefreshAsync(string mode, IntPtr foregroundHandle, bool force)
+        private async Task<bool> RefreshAsync(string mode, IntPtr foregroundHandle, bool force)
         {
             if (!_uiReady || _busy)
             {
-                return;
+                return false;
             }
             if (_refreshing)
             {
-                if (force || !string.Equals(mode, _scanMode, StringComparison.OrdinalIgnoreCase))
+                if (!_quickClosing && (force || !string.Equals(mode, _scanMode, StringComparison.OrdinalIgnoreCase)))
                 {
                     _pendingMode = mode;
                     _pendingForeground = foregroundHandle;
                 }
-                return;
+                return false;
             }
 
             _refreshing = true;
@@ -609,7 +628,7 @@ namespace OneClickClose
             _refreshCts = cts;
             try
             {
-                await RefreshCoreAsync(mode, foregroundHandle, cts.Token);
+                return await RefreshCoreAsync(mode, foregroundHandle, cts.Token);
             }
             finally
             {
@@ -631,7 +650,7 @@ namespace OneClickClose
             }
         }
 
-        private async Task RefreshCoreAsync(string mode, IntPtr foregroundHandle, CancellationToken token)
+        private async Task<bool> RefreshCoreAsync(string mode, IntPtr foregroundHandle, CancellationToken token)
         {
             LockRefreshUi();
             Stopwatch watch = Stopwatch.StartNew();
@@ -653,14 +672,17 @@ namespace OneClickClose
                     "扫描完成：显示 " + visibleCount + " 个程序（候选 " + apps.Count +
                     " 个），用时 " + watch.ElapsedMilliseconds + "ms",
                     Color.DimGray);
+                return true;
             }
             catch (OperationCanceledException)
             {
                 SetStatus("扫描已取消", Color.DimGray);
+                return false;
             }
             catch (Exception ex)
             {
                 SetStatus("扫描失败，保留旧清单：" + ex.Message, Color.Firebrick);
+                return false;
             }
         }
 
@@ -688,8 +710,7 @@ namespace OneClickClose
                 {
                     if (row.Tag != null)
                     {
-                        AppCandidate app = (AppCandidate)row.Tag;
-                        row.Cells[ColCheck].ReadOnly = app.Protected;
+                        row.Cells[ColCheck].ReadOnly = true;
                     }
                 }
             }
@@ -707,8 +728,6 @@ namespace OneClickClose
             if (_previewButton != null) _previewButton.Enabled = canAct;
             if (_settingsButton != null) _settingsButton.Enabled = canAct;
             if (_protectSelectedButton != null) _protectSelectedButton.Enabled = canAct;
-            if (_selectAllButton != null) _selectAllButton.Enabled = canAct;
-            if (_selectNoneButton != null) _selectNoneButton.Enabled = canAct;
             if (_refreshButton != null) _refreshButton.Enabled = canAct;
             if (_searchBox != null) _searchBox.Enabled = canAct;
             if (_showAllWindowsCheckBox != null) _showAllWindowsCheckBox.Enabled = canAct;
@@ -737,19 +756,6 @@ namespace OneClickClose
 
         private void UpdateRows(List<AppCandidate> apps)
         {
-            HashSet<string> checkedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (DataGridViewRow existing in _grid.Rows)
-            {
-                if (existing.Tag == null)
-                {
-                    continue;
-                }
-                if (existing.Cells[ColCheck].Value is bool && (bool)existing.Cells[ColCheck].Value)
-                {
-                    checkedKeys.Add(GetSelectionKey((AppCandidate)existing.Tag));
-                }
-            }
-
             AttachWindowSelections(apps);
 
             bool previousSuppress = _suppressGridEvents;
@@ -763,9 +769,7 @@ namespace OneClickClose
                     DataGridViewRow row = new DataGridViewRow();
                     row.CreateCells(_grid);
                     row.Tag = app;
-                    bool isChecked = !app.Protected &&
-                        checkedKeys.Contains(GetSelectionKey(app));
-                    row.Cells[ColCheck].Value = isChecked;
+                    row.Cells[ColCheck].Value = !app.Protected;
                     row.Cells[ColIcon].Value = GetAppIcon(app);
                     row.Cells[ColName].Value = app.DisplayName;
                     row.Cells[ColProcess].Value = app.ProcessCount > 1
@@ -926,7 +930,8 @@ namespace OneClickClose
             }
             else
             {
-                row.Cells[ColCheck].ReadOnly = false;
+                row.Cells[ColCheck].Value = true;
+                row.Cells[ColCheck].ReadOnly = true;
                 row.Cells[ColKind].Value = app.Kind;
                 row.DefaultCellStyle.ForeColor = Color.Empty;
                 row.DefaultCellStyle.Font = app.IsForeground ? _boldFont : _baseFont;
@@ -1046,7 +1051,8 @@ namespace OneClickClose
             List<CloseTargetGroup> groups = _closeService.CreateTargets(
                 selected,
                 includeChildren,
-                applyWindowSelection);
+                applyWindowSelection,
+                Config);
             int liveCount = groups.Sum(group => group.Targets.Count(target => !target.Skipped));
             if (liveCount == 0)
             {
@@ -1140,7 +1146,8 @@ namespace OneClickClose
             List<CloseTargetGroup> groups = _closeService.CreateTargets(
                 selected,
                 includeChildren,
-                applyWindowSelection);
+                applyWindowSelection,
+                Config);
             List<CloseTarget> targets = groups
                 .SelectMany(group => group.Targets)
                 .ToList();
@@ -1194,9 +1201,13 @@ namespace OneClickClose
                 bool hotkeyChanged = !string.Equals(
                     snapshot.Hotkey,
                     result.Hotkey,
+                    StringComparison.OrdinalIgnoreCase) || !string.Equals(
+                    snapshot.CloseHotkey,
+                    result.CloseHotkey,
                     StringComparison.OrdinalIgnoreCase);
 
                 Config.Hotkey = result.Hotkey;
+                Config.CloseHotkey = result.CloseHotkey;
                 Config.GracefulTimeoutSeconds = result.GracefulTimeoutSeconds;
                 Config.ShowAllWindows = result.ShowAllWindows;
                 Config.IncludeChildProcesses = result.IncludeChildProcesses;
@@ -1205,6 +1216,7 @@ namespace OneClickClose
                 if (!_configStore.Save())
                 {
                     Config.Hotkey = snapshot.Hotkey;
+                    Config.CloseHotkey = snapshot.CloseHotkey;
                     Config.GracefulTimeoutSeconds = snapshot.GracefulTimeoutSeconds;
                     Config.ShowAllWindows = snapshot.ShowAllWindows;
                     Config.IncludeChildProcesses = snapshot.IncludeChildProcesses;
@@ -1228,12 +1240,13 @@ namespace OneClickClose
                 bool hotkeyOk = true;
                 if (hotkeyChanged)
                 {
-                    hotkeyOk = ReRegisterHotkey();
+                    hotkeyOk = ReRegisterHotkeys();
                     if (!hotkeyOk)
                     {
                         Config.Hotkey = snapshot.Hotkey;
+                        Config.CloseHotkey = snapshot.CloseHotkey;
                         _configStore.Save(false);
-                        ReRegisterHotkey();
+                        ReRegisterHotkeys();
                     }
                 }
 
@@ -1251,7 +1264,7 @@ namespace OneClickClose
                 else if (!hotkeyOk)
                 {
                     SetStatus(
-                        "设置已保存，但新热键注册失败，已保留旧热键 " + Config.Hotkey,
+                        "设置已保存，但新热键注册失败，已恢复原来的两组热键",
                         Color.Firebrick);
                 }
                 else
@@ -1612,64 +1625,6 @@ namespace OneClickClose
             UpdateSelectionStatus();
         }
 
-        private void SelectAllVisible()
-        {
-            if (!_uiReady || _busy || _refreshing)
-            {
-                return;
-            }
-            _suppressGridEvents = true;
-            try
-            {
-                foreach (DataGridViewRow row in _grid.Rows)
-                {
-                    if (row.Tag == null)
-                    {
-                        continue;
-                    }
-                    AppCandidate app = (AppCandidate)row.Tag;
-                    if (row.Visible && !app.Protected)
-                    {
-                        row.Cells[ColCheck].Value = true;
-                    }
-                }
-            }
-            finally
-            {
-                _suppressGridEvents = false;
-            }
-            UpdateSelectionStatus();
-        }
-
-        private void SelectNone()
-        {
-            if (!_uiReady || _busy || _refreshing)
-            {
-                return;
-            }
-            _suppressGridEvents = true;
-            try
-            {
-                foreach (DataGridViewRow row in _grid.Rows)
-                {
-                    if (row.Tag == null)
-                    {
-                        continue;
-                    }
-                    AppCandidate app = (AppCandidate)row.Tag;
-                    if (!app.Protected)
-                    {
-                        row.Cells[ColCheck].Value = false;
-                    }
-                }
-            }
-            finally
-            {
-                _suppressGridEvents = false;
-            }
-            UpdateSelectionStatus();
-        }
-
         private void RefreshProfileList()
         {
             if (_profileCombo == null)
@@ -1853,7 +1808,7 @@ namespace OneClickClose
 
             RefreshProfileList();
             SyncVisibleProtectionState();
-            bool hotkeyOk = ReRegisterHotkey();
+            bool hotkeyOk = ReRegisterHotkeys();
             _ = RefreshAsync(_currentMode, NativeMethods.GetForegroundWindow(), true);
             if (hotkeyOk)
             {
@@ -1922,49 +1877,74 @@ namespace OneClickClose
             };
         }
 
-        private bool InitializeHotkey()
+        private bool InitializeHotkeys()
         {
-            HotkeyDefinition definition = HotkeyParser.Parse(Config.Hotkey);
+            bool showRegistered = InitializeHotkey(Config.Hotkey, "显示/隐藏", false, out _hotkeyWindow);
+            bool closeRegistered = InitializeHotkey(Config.CloseHotkey, "关闭非保护项", true, out _closeHotkeyWindow);
+            return showRegistered && closeRegistered;
+        }
+
+        private bool InitializeHotkey(string text, string action, bool closeHotkey, out HotkeyWindow window)
+        {
+            window = null;
+            HotkeyDefinition definition = HotkeyParser.Parse(text);
+            bool valid = definition.IsValid;
+            if (!valid && closeHotkey)
+            {
+                definition = HotkeyParser.Parse(AppConfig.DefaultCloseHotkey);
+            }
+            string effectiveHotkey = valid ? text : (closeHotkey ? AppConfig.DefaultCloseHotkey : "Ctrl+Alt+X");
             try
             {
-                _hotkeyWindow = new HotkeyWindow(definition);
-                _hotkeyWindow.HotkeyPressed += delegate { TogglePicker(); };
-                if (!_hotkeyWindow.Registered)
+                window = new HotkeyWindow(definition, closeHotkey);
+                if (closeHotkey)
                 {
-                    SetStatus(
-                        "热键 " + Config.Hotkey +
-                        " 注册失败（可能被旧版或别的程序占用）；可从托盘打开，或在设置中换一个热键",
-                        Color.Firebrick);
-                    ShowBalloon(
-                        "热键 " + Config.Hotkey +
-                        " 注册失败（可能被旧版或别的程序占用）。可从托盘打开，或在设置中换一个热键。");
+                    window.HotkeyPressed += async delegate { await CloseUnprotectedFromHotkeyAsync(); };
+                }
+                else
+                {
+                    window.HotkeyPressed += delegate { TogglePicker(); };
+                }
+                if (!window.Registered)
+                {
+                    string message = action + "热键 " + effectiveHotkey +
+                        " 注册失败（可能被其他程序占用）；请在设置中更换。";
+                    SetStatus(message, Color.Firebrick);
+                    ShowBalloon(message);
                     return false;
                 }
-                if (!definition.IsValid)
+                if (!valid)
                 {
-                    SetStatus("热键格式无效，已使用 Ctrl+Alt+X", Color.Firebrick);
+                    string message = action + "热键格式无效，已使用 " + effectiveHotkey;
+                    SetStatus(message, Color.Firebrick);
+                    ShowBalloon(message);
                 }
                 return true;
             }
             catch (Exception ex)
             {
-                SetStatus("热键注册失败：" + ex.Message, Color.Firebrick);
-                ShowBalloon("热键注册失败，请从托盘图标打开。");
+                SetStatus(action + "热键注册失败：" + ex.Message, Color.Firebrick);
+                ShowBalloon(action + "热键注册失败，请从托盘打开设置。");
                 return false;
             }
         }
 
-        private bool ReRegisterHotkey()
+        private bool ReRegisterHotkeys()
         {
             if (_hotkeyWindow != null)
             {
                 _hotkeyWindow.Dispose();
                 _hotkeyWindow = null;
             }
-            return InitializeHotkey();
+            if (_closeHotkeyWindow != null)
+            {
+                _closeHotkeyWindow.Dispose();
+                _closeHotkeyWindow = null;
+            }
+            return InitializeHotkeys();
         }
 
-        private void ShowBalloon(string text)
+        private void ShowBalloon(string text, ToolTipIcon icon = ToolTipIcon.Warning)
         {
             if (_trayIcon == null)
             {
@@ -1972,10 +1952,62 @@ namespace OneClickClose
             }
             try
             {
-                _trayIcon.ShowBalloonTip(5000, "清场助手", text, ToolTipIcon.Warning);
+                _trayIcon.ShowBalloonTip(5000, "清场助手", text, icon);
             }
             catch
             {
+            }
+        }
+
+        internal async Task CloseUnprotectedFromHotkeyAsync()
+        {
+            if (!_uiReady || IsDisposed)
+            {
+                return;
+            }
+            if (_busy || _refreshing || _quickClosing)
+            {
+                SetStatus("正在扫描或关闭，请稍后再按关闭热键", Color.DimGray);
+                if (!Visible) ShowBalloon("正在扫描或关闭，请稍后再按关闭热键。", ToolTipIcon.Info);
+                return;
+            }
+
+            _quickClosing = true;
+            bool wasHidden = !Visible;
+            try
+            {
+                bool refreshed = await RefreshAsync(_currentMode, NativeMethods.GetForegroundWindow(), true);
+                if (!refreshed || IsDisposed)
+                {
+                    if (!IsDisposed && !Visible)
+                    {
+                        ShowBalloon("扫描未完成，没有发送关闭请求。");
+                    }
+                    return;
+                }
+
+                if (_currentMode == "all" && !Visible && GetSelectedCandidates().Count > 0)
+                {
+                    ShowPicker();
+                }
+                await CloseSelectedAsync();
+                if (wasHidden && Visible && !IsDisposed)
+                {
+                    Hide();
+                }
+                if (!IsDisposed && !Visible)
+                {
+                    ShowBalloon(_statusLabel.Text, ToolTipIcon.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus("快捷关闭失败：" + ex.Message, Color.Firebrick);
+                if (!Visible) ShowBalloon("快捷关闭失败：" + ex.Message);
+            }
+            finally
+            {
+                _quickClosing = false;
             }
         }
 
@@ -2024,10 +2056,18 @@ namespace OneClickClose
             }
 
             IntPtr foreground = NativeMethods.GetForegroundWindow();
+            _showRequested = true;
             Show();
+            if (WindowState == FormWindowState.Minimized)
+            {
+                WindowState = FormWindowState.Normal;
+            }
             NativeMethods.SetForegroundWindow(Handle);
             Activate();
-            _ = RefreshAsync(_currentMode, foreground, true);
+            if (!_quickClosing)
+            {
+                _ = RefreshAsync(_currentMode, foreground, true);
+            }
         }
 
         private void ExitApp()
@@ -2044,6 +2084,12 @@ namespace OneClickClose
                 catch { }
                 _hotkeyWindow = null;
             }
+            if (_closeHotkeyWindow != null)
+            {
+                try { _closeHotkeyWindow.Dispose(); }
+                catch { }
+                _closeHotkeyWindow = null;
+            }
             if (_trayIcon != null)
             {
                 try
@@ -2056,45 +2102,6 @@ namespace OneClickClose
             }
             Close();
             Application.Exit();
-        }
-
-        private void Grid_CurrentCellDirtyStateChanged(object sender, EventArgs e)
-        {
-            if (_grid.IsCurrentCellDirty && _grid.CurrentCell is DataGridViewCheckBoxCell)
-            {
-                _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
-            }
-        }
-
-        private void Grid_CellValueChanged(object sender, DataGridViewCellEventArgs e)
-        {
-            if (_suppressGridEvents)
-            {
-                return;
-            }
-            if (e.ColumnIndex == ColCheck)
-            {
-                UpdateSelectionStatus();
-            }
-        }
-
-        private void Grid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
-        {
-            if (_refreshing || _busy || e.RowIndex < 0)
-            {
-                return;
-            }
-            DataGridViewRow row = _grid.Rows[e.RowIndex];
-            if (row.Tag == null)
-            {
-                return;
-            }
-            AppCandidate app = (AppCandidate)row.Tag;
-            if (app.Protected)
-            {
-                return;
-            }
-            row.Cells[ColCheck].Value = !(row.Cells[ColCheck].Value is bool && (bool)row.Cells[ColCheck].Value);
         }
 
         private void Grid_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)

@@ -25,6 +25,12 @@ namespace OneClickClose
 
     public static class HotkeyParser
     {
+        public static bool IsSameCombination(HotkeyDefinition first, HotkeyDefinition second)
+        {
+            return first != null && second != null && first.IsValid && second.IsValid &&
+                first.Modifiers == second.Modifiers && first.VirtualKey == second.VirtualKey;
+        }
+
         public static HotkeyDefinition Parse(string text)
         {
             uint modifiers = 0;

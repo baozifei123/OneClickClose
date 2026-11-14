@@ -29,6 +29,15 @@ namespace OneClickClose
             bool includeChildProcesses,
             bool applyWindowSelection)
         {
+            return CreateTargets(selected, includeChildProcesses, applyWindowSelection, null);
+        }
+
+        public List<CloseTargetGroup> CreateTargets(
+            IEnumerable<AppCandidate> selected,
+            bool includeChildProcesses,
+            bool applyWindowSelection,
+            AppConfig config)
+        {
             List<WindowInfo> visibleWindows = NativeMethods.GetVisibleWindows();
             Dictionary<int, List<WindowInfo>> windowsByPid = new Dictionary<int, List<WindowInfo>>();
             foreach (WindowInfo window in visibleWindows)
@@ -42,6 +51,18 @@ namespace OneClickClose
                 }
                 list.Add(window);
             }
+
+            HashSet<string> protectedNames = new HashSet<string>(
+                (config == null || config.ProtectedProcesses == null
+                    ? new List<string>() : config.ProtectedProcesses)
+                    .Select(ProcessNameUtility.Normalize),
+                StringComparer.OrdinalIgnoreCase);
+            HashSet<string> protectedPaths = new HashSet<string>(
+                (config == null || config.ProtectedPaths == null
+                    ? new List<string>() : config.ProtectedPaths)
+                    .Select(ProcessNameUtility.NormalizePath)
+                    .Where(path => path.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
 
             ProcessMetadata metadata = includeChildProcesses ? ProcessMetadataProvider.Get() : null;
             bool currentElevated = ProcessPrivilege.IsCurrentProcessElevated();
@@ -114,6 +135,17 @@ namespace OneClickClose
                             continue;
                         }
 
+                        if (app.Protected || IsUserProtected(
+                            liveName,
+                            string.IsNullOrWhiteSpace(livePath) ? app.Path : livePath,
+                            protectedNames,
+                            protectedPaths))
+                        {
+                            group.Targets.Add(CreateSkippedTarget(
+                                processId, app.DisplayName, liveName, "受保护，已跳过"));
+                            continue;
+                        }
+
                         List<WindowInfo> targetWindows;
                         if (!windowsByPid.TryGetValue(processId, out targetWindows))
                         {
@@ -157,9 +189,11 @@ namespace OneClickClose
                     }
                 }
 
-                if (includeChildProcesses && metadata != null && rootIds.Count > 0)
+                HashSet<int> activeRootIds = new HashSet<int>(
+                    group.Targets.Where(target => !target.Skipped).Select(target => target.ProcessId));
+                if (includeChildProcesses && metadata != null && activeRootIds.Count > 0)
                 {
-                    HashSet<int> descendants = ProcessTree.GetDescendantIds(rootIds, metadata.ParentMap);
+                    HashSet<int> descendants = ProcessTree.GetDescendantIds(activeRootIds, metadata.ParentMap);
                     foreach (int childId in descendants.OrderBy(id => id))
                     {
                         if (!groupProcessIds.Add(childId))
@@ -207,12 +241,13 @@ namespace OneClickClose
                             {
                                 livePath = ProcessNameUtility.GetProcessPathSafe(live);
                             }
-                            if (string.IsNullOrWhiteSpace(livePath))
+                            if (string.IsNullOrWhiteSpace(livePath) ||
+                                IsUserProtected(liveName, livePath, protectedNames, protectedPaths))
                             {
                                 continue;
                             }
 
-                            int rootId = rootIds.FirstOrDefault(root =>
+                            int rootId = activeRootIds.FirstOrDefault(root =>
                                 ProcessTree.IsDescendantOf(childId, root, metadata.ParentMap));
                             if (rootId <= 0)
                             {
@@ -631,6 +666,17 @@ namespace OneClickClose
                 live.Dispose();
                 return null;
             }
+        }
+
+        private static bool IsUserProtected(
+            string name,
+            string path,
+            HashSet<string> protectedNames,
+            HashSet<string> protectedPaths)
+        {
+            return protectedNames.Contains(ProcessNameUtility.Normalize(name)) ||
+                (!string.IsNullOrWhiteSpace(path) &&
+                    protectedPaths.Contains(ProcessNameUtility.NormalizePath(path)));
         }
 
         private static IEnumerable<int> GetProcessIds(AppCandidate app)

@@ -120,8 +120,11 @@ namespace OneClickClose
 
     public sealed class AppConfig
     {
+        public const string DefaultCloseHotkey = "Ctrl+Alt+Shift+X";
+
         public int SchemaVersion { get; set; }
         public string Hotkey { get; set; }
+        public string CloseHotkey { get; set; }
         public int GracefulTimeoutSeconds { get; set; }
         public List<string> ProtectedProcesses { get; set; }
         public List<string> ProtectedPaths { get; set; }
@@ -136,6 +139,7 @@ namespace OneClickClose
         {
             SchemaVersion = 2;
             Hotkey = "Ctrl+Alt+X";
+            CloseHotkey = DefaultCloseHotkey;
             GracefulTimeoutSeconds = 5;
             ProtectedProcesses = new List<string>();
             ProtectedPaths = new List<string>();
@@ -157,6 +161,7 @@ namespace OneClickClose
             AppConfig copy = new AppConfig();
             copy.SchemaVersion = SchemaVersion;
             copy.Hotkey = Hotkey;
+            copy.CloseHotkey = CloseHotkey;
             copy.GracefulTimeoutSeconds = GracefulTimeoutSeconds;
             copy.ProtectedProcesses = ProtectedProcesses == null
                 ? new List<string>()

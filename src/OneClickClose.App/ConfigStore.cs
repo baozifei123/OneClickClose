@@ -360,6 +360,8 @@ namespace OneClickClose
             AppConfig config = new AppConfig();
             config.SchemaVersion = 2;
             config.Hotkey = string.IsNullOrWhiteSpace(data.Hotkey) ? "Ctrl+Alt+X" : data.Hotkey.Trim();
+            config.CloseHotkey = string.IsNullOrWhiteSpace(data.CloseHotkey)
+                ? AppConfig.DefaultCloseHotkey : data.CloseHotkey.Trim();
             config.GracefulTimeoutSeconds = data.GracefulTimeoutSeconds >= 1 && data.GracefulTimeoutSeconds <= 60
                 ? data.GracefulTimeoutSeconds
                 : 5;
@@ -406,6 +408,8 @@ namespace OneClickClose
             AppConfig payload = source == null ? AppConfig.CreateDefault() : source.Clone();
             payload.SchemaVersion = 2;
             payload.Hotkey = string.IsNullOrWhiteSpace(payload.Hotkey) ? "Ctrl+Alt+X" : payload.Hotkey.Trim();
+            payload.CloseHotkey = string.IsNullOrWhiteSpace(payload.CloseHotkey)
+                ? AppConfig.DefaultCloseHotkey : payload.CloseHotkey.Trim();
             if (payload.GracefulTimeoutSeconds < 1 || payload.GracefulTimeoutSeconds > 60)
             {
                 payload.GracefulTimeoutSeconds = 5;

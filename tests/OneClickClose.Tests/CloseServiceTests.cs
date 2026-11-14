@@ -381,6 +381,35 @@ namespace OneClickClose.Tests
                 Assert.Contains(groups[0].Targets, target =>
                     target.ProcessId == childId && target.IsChildProcess);
 
+                string childName;
+                string childPath;
+                using (Process child = Process.GetProcessById(childId))
+                {
+                    childName = child.ProcessName;
+                    childPath = ProcessNameUtility.GetProcessPathSafe(child);
+                }
+                AppConfig config = AppConfig.CreateDefault();
+                config.ProtectedProcesses.Add(childName);
+                List<CloseTargetGroup> nameProtected = service.CreateTargets(
+                    new[] { candidate }, true, false, config);
+                Assert.DoesNotContain(nameProtected[0].Targets, target => target.ProcessId == childId);
+
+                config.ProtectedProcesses.Clear();
+                Assert.False(string.IsNullOrWhiteSpace(childPath));
+                config.ProtectedPaths.Add(childPath);
+                List<CloseTargetGroup> pathProtected = service.CreateTargets(
+                    new[] { candidate }, true, false, config);
+                Assert.DoesNotContain(pathProtected[0].Targets, target => target.ProcessId == childId);
+
+                config.ProtectedPaths.Clear();
+                config.ProtectedProcesses.Add(parent.ProcessName);
+                List<CloseTargetGroup> rootProtected = service.CreateTargets(
+                    new[] { candidate }, true, false, config);
+                Assert.All(rootProtected[0].Targets, target => Assert.True(target.Skipped));
+                Assert.DoesNotContain(rootProtected[0].Targets, target => target.ProcessId == childId);
+                Assert.False(parent.HasExited);
+                Assert.True(ProcessNameUtility.ProcessExists(childId));
+
                 ClosePreviewResult result = new ClosePreviewResult
                 {
                     Confirmed = true,

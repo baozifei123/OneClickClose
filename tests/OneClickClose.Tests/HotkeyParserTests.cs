@@ -32,6 +32,20 @@ namespace OneClickClose.Tests
         }
 
         [Fact]
+        public void DetectsIdenticalHotkeyCombinationsRegardlessOfOrder()
+        {
+            Assert.True(HotkeyParser.IsSameCombination(
+                HotkeyParser.Parse("Ctrl+Alt+Shift+X"),
+                HotkeyParser.Parse("shift+alt+ctrl+x")));
+            Assert.False(HotkeyParser.IsSameCombination(
+                HotkeyParser.Parse("Ctrl+Alt+X"),
+                HotkeyParser.Parse("Ctrl+Alt+Shift+X")));
+            Assert.False(HotkeyParser.IsSameCombination(
+                HotkeyParser.Parse("Ctrl"),
+                HotkeyParser.Parse("Ctrl+Alt+X")));
+        }
+
+        [Fact]
         public void InvalidTextFallsBackToControlAltX()
         {
             HotkeyDefinition definition = HotkeyParser.Parse("Ctrl");

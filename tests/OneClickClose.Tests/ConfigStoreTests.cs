@@ -30,6 +30,7 @@ namespace OneClickClose.Tests
 
                 Assert.Equal(string.Empty, store.LastLoadError);
                 Assert.Equal("Ctrl+Shift+Z", store.Current.Hotkey);
+                Assert.Equal(AppConfig.DefaultCloseHotkey, store.Current.CloseHotkey);
                 Assert.Equal(9, store.Current.GracefulTimeoutSeconds);
                 Assert.Equal("all", store.Current.LastMode);
                 Assert.Equal(
@@ -77,6 +78,25 @@ namespace OneClickClose.Tests
                 AppConfig reloaded = reloadedStore.Current;
                 Assert.Equal(2, reloaded.SchemaVersion);
                 Assert.Equal("Ctrl+Alt+X", reloaded.Hotkey);
+                Assert.Equal(AppConfig.DefaultCloseHotkey, reloaded.CloseHotkey);
+            }
+        }
+
+        [Fact]
+        public void CloseHotkeyRoundTripsAndCloneKeepsIt()
+        {
+            using (TempDirectory temp = new TempDirectory())
+            {
+                string path = Path.Combine(temp.Path, "config.json");
+                ConfigStore store = new ConfigStore(path);
+                store.Load();
+                store.Current.CloseHotkey = "Ctrl+Shift+F12";
+                Assert.Equal("Ctrl+Shift+F12", store.Current.Clone().CloseHotkey);
+                Assert.True(store.Save());
+
+                ConfigStore reloaded = new ConfigStore(path);
+                reloaded.Load();
+                Assert.Equal("Ctrl+Shift+F12", reloaded.Current.CloseHotkey);
             }
         }
 

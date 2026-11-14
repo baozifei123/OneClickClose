@@ -20,7 +20,7 @@ namespace OneClickClose.Tests
                     ConfigStore store = new ConfigStore(Path.Combine(temp.Path, "config.json"));
                     store.Load();
 
-                    using (MainForm form = new MainForm(store, true))
+                    using (MainForm form = new MainForm(store, true, false))
                     {
                         form.Opacity = 0;
                         form.Show();

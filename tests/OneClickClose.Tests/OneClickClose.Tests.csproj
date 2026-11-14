@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\OneClickClose.App\OneClickClose.App.csproj" />
+    <ProjectReference Include="..\OneClickClose.TestWindow\OneClickClose.TestWindow.csproj" />
   </ItemGroup>
 
   <ItemGroup>

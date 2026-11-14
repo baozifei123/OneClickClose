@@ -14,6 +14,7 @@ namespace OneClickClose
         public const uint MOD_CONTROL = 0x0002;
         public const uint MOD_SHIFT = 0x0004;
         public const uint MOD_WIN = 0x0008;
+        public const uint MOD_NOREPEAT = 0x4000;
 
         public const int GWL_EXSTYLE = -20;
         public const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -201,14 +202,14 @@ namespace OneClickClose
             get { return _registered; }
         }
 
-        public HotkeyWindow(HotkeyDefinition definition)
+        public HotkeyWindow(HotkeyDefinition definition, bool noRepeat = false)
         {
             _definition = definition ?? HotkeyDefinition.Default;
             CreateHandle(new CreateParams { Caption = "OneClickClose.Hotkey" });
             _registered = NativeMethods.RegisterHotKey(
                 Handle,
                 HotKeyId,
-                _definition.Modifiers,
+                _definition.Modifiers | (noRepeat ? NativeMethods.MOD_NOREPEAT : 0),
                 _definition.VirtualKey);
         }
 
