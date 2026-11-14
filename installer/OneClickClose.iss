@@ -48,7 +48,7 @@ Type: files; Name: "{userprograms}\一键收摊\卸载 清场助手.lnk"
 Type: files; Name: "{autodesktop}\一键收摊.lnk"
 
 [Files]
-Source: "..\dist\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,*.xml,*.log"
+Source: "..\dist\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.pdb,*.xml,*.log,config.json*"
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
