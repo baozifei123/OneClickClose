@@ -158,7 +158,7 @@ namespace OneClickClose.Tests
                             DataGridViewRow firstRow = RowFor(grid, first.Id);
                             DataGridViewRow protectedRow = RowFor(grid, protectedProcess.Id);
                             Assert.True((bool)firstRow.Cells[0].Value);
-                            Assert.True(firstRow.Cells[0].ReadOnly);
+                            Assert.False(firstRow.Cells[0].ReadOnly);
                             Assert.False((bool)protectedRow.Cells[0].Value);
                             Assert.True(protectedRow.Cells[0].ReadOnly);
 
@@ -171,9 +171,12 @@ namespace OneClickClose.Tests
 
                             firstRow.Cells[0].Value = false;
                             WaitFor(form.RefreshForTestAsync("windows"));
-                            Assert.True((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.False((bool)RowFor(grid, first.Id).Cells[0].Value);
 
                             later = StartTestWindow(temp, "later-" + id, title);
+                            WaitFor(form.RefreshForTestAsync("windows"));
+                            Assert.True((bool)RowFor(grid, later.Id).Cells[0].Value);
+
                             WaitFor(form.CloseUnprotectedFromHotkeyAsync());
                             WaitUntil(() => first.HasExited && later.HasExited, "快捷关闭未关闭测试程序");
                             Assert.False(protectedProcess.HasExited);
@@ -184,6 +187,82 @@ namespace OneClickClose.Tests
                         StopTestWindow(first);
                         StopTestWindow(later);
                         StopTestWindow(protectedProcess);
+                    }
+                }
+            });
+        }
+
+        private static Button ButtonWithText(Control parent, string text)
+        {
+            return Descendants(parent).OfType<Button>().Single(button => button.Text == text);
+        }
+
+        [Fact]
+        public void SelectionButtonsAndBatchProtectOperateOnCheckedRows()
+        {
+            StaRunner.Run(delegate
+            {
+                using (TempDirectory temp = new TempDirectory())
+                {
+                    Process first = null;
+                    Process second = null;
+                    try
+                    {
+                        string id = Guid.NewGuid().ToString("N");
+                        string title = "OneClickCloseTest" + id;
+                        first = StartTestWindow(temp, "select-first-" + id, title);
+                        second = StartTestWindow(temp, "select-second-" + id, title);
+
+                        ConfigStore store = new ConfigStore(Path.Combine(temp.Path, "config.json"));
+                        store.Load();
+                        using (MainForm form = new MainForm(store, false, false))
+                        {
+                            form.Opacity = 0;
+                            form.Show();
+                            WaitUntil(
+                                () => form.Visible && form.RowCountForTest > 0 && !form.IsRefreshingForTest,
+                                "首次扫描超时");
+                            Descendants(form).OfType<TextBox>().Single().Text = title;
+                            WaitFor(form.RefreshForTestAsync("windows"));
+
+                            DataGridView grid = Descendants(form).OfType<DataGridView>().Single();
+                            Assert.True((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.True((bool)RowFor(grid, second.Id).Cells[0].Value);
+
+                            ButtonWithText(form, "全不选").PerformClick();
+                            Assert.False((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.False((bool)RowFor(grid, second.Id).Cells[0].Value);
+
+                            ButtonWithText(form, "全选").PerformClick();
+                            Assert.True((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.True((bool)RowFor(grid, second.Id).Cells[0].Value);
+
+                            ButtonWithText(form, "反选").PerformClick();
+                            Assert.False((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.False((bool)RowFor(grid, second.Id).Cells[0].Value);
+
+                            ButtonWithText(form, "全选").PerformClick();
+                            RowFor(grid, second.Id).Cells[0].Value = false;
+                            ButtonWithText(form, "保护选中").PerformClick();
+
+                            Assert.Contains(
+                                store.Current.ProtectedProcesses,
+                                name => ProcessNameUtility.SameName(name, first.ProcessName));
+                            Assert.DoesNotContain(
+                                store.Current.ProtectedProcesses,
+                                name => ProcessNameUtility.SameName(name, second.ProcessName));
+                            Assert.False((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.True(RowFor(grid, first.Id).Cells[0].ReadOnly);
+
+                            ButtonWithText(form, "反选").PerformClick();
+                            Assert.False((bool)RowFor(grid, first.Id).Cells[0].Value);
+                            Assert.True((bool)RowFor(grid, second.Id).Cells[0].Value);
+                        }
+                    }
+                    finally
+                    {
+                        StopTestWindow(first);
+                        StopTestWindow(second);
                     }
                 }
             });

@@ -49,6 +49,9 @@ namespace OneClickClose
         private Button _closeButton;
         private Button _previewButton;
         private Button _protectSelectedButton;
+        private Button _selectAllButton;
+        private Button _selectNoneButton;
+        private Button _invertSelectionButton;
         private ComboBox _profileCombo;
         private Button _profileApplyButton;
         private Button _profileSaveButton;
@@ -363,8 +366,7 @@ namespace OneClickClose
             checkColumn.HeaderText = string.Empty;
             checkColumn.Width = 40;
             checkColumn.Name = "colCheck";
-            checkColumn.ReadOnly = true;
-            checkColumn.ToolTipText = "未保护的程序始终选中；如需排除，请加入保护名单。";
+            checkColumn.ToolTipText = "未保护的程序默认选中，可手动取消；如需长期排除，请加入保护名单。";
             _grid.Columns.Add(checkColumn);
 
             DataGridViewImageColumn iconColumn = new DataGridViewImageColumn();
@@ -470,10 +472,27 @@ namespace OneClickClose
             buttonPanel.Controls.Add(_previewButton);
 
             _protectSelectedButton = new Button();
-            _protectSelectedButton.Text = "保护显示项";
+            _protectSelectedButton.Text = "保护选中";
             _protectSelectedButton.AutoSize = true;
             _protectSelectedButton.Margin = new Padding(0, 0, 6, 0);
             buttonPanel.Controls.Add(_protectSelectedButton);
+
+            _selectNoneButton = new Button();
+            _selectNoneButton.Text = "全不选";
+            _selectNoneButton.AutoSize = true;
+            _selectNoneButton.Margin = new Padding(0, 0, 6, 0);
+            buttonPanel.Controls.Add(_selectNoneButton);
+
+            _selectAllButton = new Button();
+            _selectAllButton.Text = "全选";
+            _selectAllButton.AutoSize = true;
+            _selectAllButton.Margin = new Padding(0, 0, 6, 0);
+            buttonPanel.Controls.Add(_selectAllButton);
+
+            _invertSelectionButton = new Button();
+            _invertSelectionButton.Text = "反选";
+            _invertSelectionButton.AutoSize = true;
+            buttonPanel.Controls.Add(_invertSelectionButton);
 
             _gridMenu = new ContextMenuStrip();
             _protectItem = new ToolStripMenuItem("加入保护名单（永不关闭）");
@@ -490,6 +509,9 @@ namespace OneClickClose
             _gridMenu.Items.Add(_pathUnprotectItem);
             _grid.ContextMenuStrip = _gridMenu;
 
+            _grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
+            _grid.CellValueChanged += Grid_CellValueChanged;
+            _grid.CellDoubleClick += Grid_CellDoubleClick;
             _grid.CellMouseDown += Grid_CellMouseDown;
             _gridMenu.Opening += GridMenu_Opening;
             _protectItem.Click += delegate { ToggleContextProtection(true); };
@@ -507,6 +529,9 @@ namespace OneClickClose
             _profileSaveButton.Click += delegate { SaveProfile(); };
             _profileDeleteButton.Click += delegate { DeleteProfile(); };
             _profileRestoreButton.Click += delegate { RestoreBackup(); };
+            _selectAllButton.Click += delegate { SelectAllVisible(); };
+            _selectNoneButton.Click += delegate { SelectNone(); };
+            _invertSelectionButton.Click += delegate { InvertSelection(); };
             _searchBox.TextChanged += delegate { ApplyFilter(); };
             _showAllWindowsCheckBox.CheckedChanged += delegate
             {
@@ -710,7 +735,8 @@ namespace OneClickClose
                 {
                     if (row.Tag != null)
                     {
-                        row.Cells[ColCheck].ReadOnly = true;
+                        AppCandidate app = (AppCandidate)row.Tag;
+                        row.Cells[ColCheck].ReadOnly = app.Protected;
                     }
                 }
             }
@@ -728,6 +754,9 @@ namespace OneClickClose
             if (_previewButton != null) _previewButton.Enabled = canAct;
             if (_settingsButton != null) _settingsButton.Enabled = canAct;
             if (_protectSelectedButton != null) _protectSelectedButton.Enabled = canAct;
+            if (_selectAllButton != null) _selectAllButton.Enabled = canAct;
+            if (_selectNoneButton != null) _selectNoneButton.Enabled = canAct;
+            if (_invertSelectionButton != null) _invertSelectionButton.Enabled = canAct;
             if (_refreshButton != null) _refreshButton.Enabled = canAct;
             if (_searchBox != null) _searchBox.Enabled = canAct;
             if (_showAllWindowsCheckBox != null) _showAllWindowsCheckBox.Enabled = canAct;
@@ -756,6 +785,22 @@ namespace OneClickClose
 
         private void UpdateRows(List<AppCandidate> apps)
         {
+            HashSet<string> knownKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> checkedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataGridViewRow existing in _grid.Rows)
+            {
+                if (existing.Tag == null)
+                {
+                    continue;
+                }
+                string key = GetSelectionKey((AppCandidate)existing.Tag);
+                knownKeys.Add(key);
+                if (existing.Cells[ColCheck].Value is bool && (bool)existing.Cells[ColCheck].Value)
+                {
+                    checkedKeys.Add(key);
+                }
+            }
+
             AttachWindowSelections(apps);
 
             bool previousSuppress = _suppressGridEvents;
@@ -769,7 +814,10 @@ namespace OneClickClose
                     DataGridViewRow row = new DataGridViewRow();
                     row.CreateCells(_grid);
                     row.Tag = app;
-                    row.Cells[ColCheck].Value = !app.Protected;
+                    string selectionKey = GetSelectionKey(app);
+                    bool isChecked = !app.Protected &&
+                        (!knownKeys.Contains(selectionKey) || checkedKeys.Contains(selectionKey));
+                    row.Cells[ColCheck].Value = isChecked;
                     row.Cells[ColIcon].Value = GetAppIcon(app);
                     row.Cells[ColName].Value = app.DisplayName;
                     row.Cells[ColProcess].Value = app.ProcessCount > 1
@@ -930,8 +978,7 @@ namespace OneClickClose
             }
             else
             {
-                row.Cells[ColCheck].Value = true;
-                row.Cells[ColCheck].ReadOnly = true;
+                row.Cells[ColCheck].ReadOnly = false;
                 row.Cells[ColKind].Value = app.Kind;
                 row.DefaultCellStyle.ForeColor = Color.Empty;
                 row.DefaultCellStyle.Font = app.IsForeground ? _boldFont : _baseFont;
@@ -1614,8 +1661,105 @@ namespace OneClickClose
                     bool nameProtected = protectedNames.Contains(ProcessNameUtility.Normalize(app.Name));
                     bool pathProtected = !string.IsNullOrWhiteSpace(app.Path) &&
                         protectedPaths.Contains(ProcessNameUtility.NormalizePath(app.Path));
+                    bool wasProtected = app.Protected;
                     app.Protected = nameProtected || pathProtected;
+                    if (app.Protected)
+                    {
+                        row.Cells[ColCheck].Value = false;
+                    }
+                    else if (wasProtected)
+                    {
+                        row.Cells[ColCheck].Value = true;
+                    }
                     ApplyRowProtectionStyle(row, app);
+                }
+            }
+            finally
+            {
+                _suppressGridEvents = false;
+            }
+            UpdateSelectionStatus();
+        }
+
+        private void SelectAllVisible()
+        {
+            if (!_uiReady || _busy || _refreshing)
+            {
+                return;
+            }
+            _suppressGridEvents = true;
+            try
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    if (row.Tag == null)
+                    {
+                        continue;
+                    }
+                    AppCandidate app = (AppCandidate)row.Tag;
+                    if (row.Visible && !app.Protected)
+                    {
+                        row.Cells[ColCheck].Value = true;
+                    }
+                }
+            }
+            finally
+            {
+                _suppressGridEvents = false;
+            }
+            UpdateSelectionStatus();
+        }
+
+        private void SelectNone()
+        {
+            if (!_uiReady || _busy || _refreshing)
+            {
+                return;
+            }
+            _suppressGridEvents = true;
+            try
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    if (row.Tag == null)
+                    {
+                        continue;
+                    }
+                    AppCandidate app = (AppCandidate)row.Tag;
+                    if (!app.Protected)
+                    {
+                        row.Cells[ColCheck].Value = false;
+                    }
+                }
+            }
+            finally
+            {
+                _suppressGridEvents = false;
+            }
+            UpdateSelectionStatus();
+        }
+
+        private void InvertSelection()
+        {
+            if (!_uiReady || _busy || _refreshing)
+            {
+                return;
+            }
+            _suppressGridEvents = true;
+            try
+            {
+                foreach (DataGridViewRow row in _grid.Rows)
+                {
+                    if (row.Tag == null || !row.Visible)
+                    {
+                        continue;
+                    }
+                    AppCandidate app = (AppCandidate)row.Tag;
+                    if (!app.Protected)
+                    {
+                        bool isChecked = row.Cells[ColCheck].Value is bool && (bool)row.Cells[ColCheck].Value;
+                        row.Cells[ColCheck].Value = !isChecked;
+                    }
                 }
             }
             finally
@@ -1990,6 +2134,7 @@ namespace OneClickClose
                 {
                     ShowPicker();
                 }
+                SelectAllVisible();
                 await CloseSelectedAsync();
                 if (wasHidden && Visible && !IsDisposed)
                 {
@@ -2102,6 +2247,45 @@ namespace OneClickClose
             }
             Close();
             Application.Exit();
+        }
+
+        private void Grid_CurrentCellDirtyStateChanged(object sender, EventArgs e)
+        {
+            if (_grid.IsCurrentCellDirty && _grid.CurrentCell is DataGridViewCheckBoxCell)
+            {
+                _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            }
+        }
+
+        private void Grid_CellValueChanged(object sender, DataGridViewCellEventArgs e)
+        {
+            if (_suppressGridEvents)
+            {
+                return;
+            }
+            if (e.ColumnIndex == ColCheck)
+            {
+                UpdateSelectionStatus();
+            }
+        }
+
+        private void Grid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (_refreshing || _busy || e.RowIndex < 0)
+            {
+                return;
+            }
+            DataGridViewRow row = _grid.Rows[e.RowIndex];
+            if (row.Tag == null)
+            {
+                return;
+            }
+            AppCandidate app = (AppCandidate)row.Tag;
+            if (app.Protected)
+            {
+                return;
+            }
+            row.Cells[ColCheck].Value = !(row.Cells[ColCheck].Value is bool && (bool)row.Cells[ColCheck].Value);
         }
 
         private void Grid_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
