@@ -1,5 +1,5 @@
 ﻿#define MyAppName "清场助手"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "OneClickClose"
 #define MyAppExeName "OneClickClose.exe"
 #define MyAppId "{{47DB0005-9E8C-4F38-A6FE-1E78DE806028}}"
@@ -28,7 +28,7 @@ MinVersion=10.0
 AppMutex=Local\OneClickClose.Native.SingleInstance
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion=1.0.0.0
+VersionInfoVersion=1.1.0.0
 VersionInfoDescription=清场助手安装程序
 VersionInfoProductName=清场助手
 VersionInfoCompany=OneClickClose
