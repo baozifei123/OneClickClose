@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "清场助手：PowerShell 版工作流程",
+    "locale": "zh-CN",
+    "output": ".archify/workflow-oneclickclose-20261114-105901/oneclickclose-workflow.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "entry", "label": "启动入口" },
+    { "id": "runtime", "label": "单实例与常驻" },
+    { "id": "scan", "label": "候选扫描" },
+    { "id": "ui", "label": "面板交互" },
+    { "id": "close", "label": "关闭执行" }
+  ],
+  "groups": [
+    { "id": "scan_group", "label": "异步扫描", "lane": "scan", "fromCol": 1, "toCol": 1, "variant": "dashed" },
+    { "id": "close_group", "label": "模式与确认", "lane": "close", "fromCol": 1, "toCol": 3, "variant": "emphasis" }
+  ],
+  "nodes": [
+    { "id": "vbs", "lane": "entry", "col": 1, "type": "external", "label": "启动 PowerShell 版", "sublabel": "VBS 隐藏启动 / 直接运行", "yOffset": -45 },
+    { "id": "ps1", "lane": "entry", "col": 1, "type": "backend", "label": "OneClickClose.ps1", "sublabel": "PowerShell 5.1 · WinForms", "tag": "先加载配置", "yOffset": 45 },
+    { "id": "single", "lane": "runtime", "col": 1, "type": "security", "label": "单实例检查", "sublabel": "命名 Mutex", "yOffset": -150 },
+    { "id": "already", "lane": "runtime", "col": 2, "type": "security", "label": "提示并退出", "sublabel": "已有实例运行", "yOffset": -150 },
+    { "id": "init", "lane": "runtime", "col": 1, "type": "backend", "label": "初始化界面 / 托盘 / 热键", "sublabel": "默认 Ctrl+Alt+X", "yOffset": -50 },
+    { "id": "loop", "lane": "runtime", "col": 1, "type": "backend", "label": "常驻控制", "sublabel": "消息循环与面板唤出", "yOffset": 50 },
+    { "id": "exit", "lane": "runtime", "col": 2, "type": "backend", "label": "退出程序", "sublabel": "释放托盘 / 热键 / Mutex", "yOffset": 50 },
+    { "id": "show", "lane": "runtime", "col": 1, "type": "frontend", "label": "显示面板", "sublabel": "唤出并请求刷新", "yOffset": 150 },
+    { "id": "scan_start", "lane": "scan", "col": 1, "type": "backend", "label": "启动后台扫描", "sublabel": "BeginInvoke 异步执行", "yOffset": -50 },
+    { "id": "scan_build", "lane": "scan", "col": 1, "type": "backend", "label": "扫描过滤与分组", "sublabel": "会话 · 保护规则 · 路径", "tag": "扫描时保留旧清单", "yOffset": 50 },
+    { "id": "picker", "lane": "ui", "col": 1, "type": "frontend", "label": "程序清单面板", "sublabel": "勾选 · 保护 · 结果列" },
+    { "id": "targets", "lane": "close", "col": 1, "type": "backend", "label": "校验关闭目标", "sublabel": "PID · 名称 · 路径", "yOffset": -180 },
+    { "id": "confirm", "lane": "close", "col": 2, "type": "security", "label": "彻底退出确认", "sublabel": "列出 PID 与关闭动作", "yOffset": -180 },
+    { "id": "cancel", "lane": "close", "col": 3, "type": "security", "label": "取消关闭", "sublabel": "不发送关闭请求", "yOffset": -180 },
+    { "id": "wmclose", "lane": "close", "col": 1, "type": "messagebus", "label": "发送 WM_CLOSE", "sublabel": "无窗口时跳过", "yOffset": -60 },
+    { "id": "wait", "lane": "close", "col": 1, "type": "backend", "label": "等待优雅退出", "sublabel": "等待有窗口的目标", "icon": "clock", "yOffset": 60 },
+    { "id": "kill", "lane": "close", "col": 2, "type": "security", "label": "强制结束进程", "sublabel": "仅彻底退出模式", "yOffset": 60 },
+    { "id": "result", "lane": "close", "col": 1, "type": "frontend", "label": "回写结果", "sublabel": "已关闭 / 未响应 / 失败", "yOffset": 180 }
+  ],
+  "edges": [
+    { "id": "vbs-launch", "from": "vbs", "to": "ps1", "label": "启动", "variant": "emphasis", "role": "main" },
+    { "id": "ps1-single", "from": "ps1", "to": "single", "label": "加载配置", "variant": "emphasis", "role": "main" },
+    { "id": "single-init", "from": "single", "to": "init", "label": "获取成功", "variant": "emphasis", "role": "main" },
+    { "id": "single-already", "from": "single", "to": "already", "label": "已被占用", "variant": "security", "role": "error" },
+    { "id": "init-loop", "from": "init", "to": "loop", "label": "准备驻留", "variant": "emphasis", "role": "main" },
+    { "id": "loop-show", "from": "loop", "to": "show", "label": "热键 / 托盘 / 直接启动", "variant": "default", "role": "main" },
+    { "id": "loop-exit", "from": "loop", "to": "exit", "label": "托盘退出", "variant": "dashed", "role": "branch" },
+    { "id": "show-scan", "from": "show", "to": "scan_start", "label": "请求刷新", "variant": "emphasis", "role": "async" },
+    { "id": "scan-start-build", "from": "scan_start", "to": "scan_build", "label": "异步扫描", "variant": "dashed", "role": "async" },
+    { "id": "scan-picker", "from": "scan_build", "to": "picker", "label": "回填清单", "variant": "dashed", "role": "return" },
+    { "id": "picker-targets", "from": "picker", "to": "targets", "label": "关闭选中", "variant": "emphasis", "role": "main" },
+    { "id": "targets-confirm", "from": "targets", "to": "confirm", "label": "彻底退出", "variant": "security", "role": "branch" },
+    { "id": "targets-wmclose", "from": "targets", "to": "wmclose", "label": "只关窗口", "variant": "default", "role": "branch" },
+    { "id": "confirm-wmclose", "from": "confirm", "to": "wmclose", "label": "确认", "variant": "emphasis", "role": "main" },
+    { "id": "confirm-cancel", "from": "confirm", "to": "cancel", "label": "取消", "variant": "security", "role": "error" },
+    { "id": "wmclose-wait", "from": "wmclose", "to": "wait", "label": "发送后等待", "variant": "default", "role": "main" },
+    { "id": "wait-result", "from": "wait", "to": "result", "label": "只关窗口或已退出", "variant": "default", "role": "main" },
+    { "id": "wait-kill", "from": "wait", "to": "kill", "label": "彻底退出且仍运行", "variant": "security", "role": "branch" },
+    { "id": "kill-result", "from": "kill", "to": "result", "label": "执行结果", "variant": "default", "role": "main" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "启动与单实例",
+      "items": [
+        "Start-Hidden.vbs 通过 WScript.Shell 隐藏启动 PowerShell",
+        "Load-Config 读取 config.json；文件缺失时写入默认值",
+        "命名 Mutex 被占用时提示“已经在运行”并退出"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "扫描与保护",
+      "items": [
+        "后台 Runspace 扫描；UI 定时轮询完成并保留旧清单",
+        "只扫描当前会话；系统硬保护与自身父进程链被排除",
+        "用户保护项可显示但不能勾选；按可执行路径分组",
+        "彻底退出模式额外检查后台进程的 PE 子系统与父进程"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "关闭语义",
+      "items": [
+        "模式一只发送 WM_CLOSE，程序可以留在托盘",
+        "模式二先确认，等待有窗口的目标后再结束仍在运行的目标",
+        "无窗口目标不发送 WM_CLOSE；混合批次可能先等待其他窗口",
+        "结果列区分窗口未响应、已强制退出、失败/权限不足"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "驻留与配置",
+      "items": [
+        "Esc 只隐藏面板；关闭窗口不会退出程序",
+        "托盘“退出”才释放托盘图标、热键与 Mutex",
+        "模式切换和保护名单变更会原子保存 config.json 并保留 .bak"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "读图说明",
+      "items": [
+        "依据项目中的 PowerShell 版源码整理，不绑定提交或远程地址",
+        "项目现有原生 EXE，此图不涵盖其不同的流程",
+        "展示主流程与关键分支，不逐行覆盖所有错误路径"
+      ]
+    }
+  ]
+}

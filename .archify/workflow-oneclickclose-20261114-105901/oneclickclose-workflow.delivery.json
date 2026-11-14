@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "40c8b44d-3afb-4382-baf6-228a14392132",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\candidate.json",
+  "output": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\oneclickclose-workflow.html",
+  "specification": {
+    "sha256": "0c8efae3da58cd7e19a4ac724b93a050fd0b31c57800f7c064d38a2bb8a58472",
+    "bytes": 7960
+  },
+  "artifact": {
+    "sha256": "9d43adcf6dc2274e848b919b152a3bbf47e2be5732ced5122f9b085c5e8f25fb",
+    "bytes": 845373
+  }
+}
