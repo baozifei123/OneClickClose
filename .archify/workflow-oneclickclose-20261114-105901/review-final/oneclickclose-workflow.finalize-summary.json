@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\candidate.json",
+    "sha256": "0c8efae3da58cd7e19a4ac724b93a050fd0b31c57800f7c064d38a2bb8a58472",
+    "bytes": 7960
+  },
+  "artifact": {
+    "path": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\oneclickclose-workflow.html",
+    "sha256": "9d43adcf6dc2274e848b919b152a3bbf47e2be5732ced5122f9b085c5e8f25fb",
+    "bytes": 845373
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\review-final\\oneclickclose-workflow.finalize.json",
+    "summaryReceipt": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\review-final\\oneclickclose-workflow.finalize-summary.json",
+    "browserCheckReceipt": "E:\\code\\一键关闭项目\\.claude\\worktrees\\archify-workflow\\.archify\\workflow-oneclickclose-20261114-105901\\review-final\\oneclickclose-workflow.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-13T06:46:49.927Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 3309,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}
