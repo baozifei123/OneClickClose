@@ -1,0 +1,211 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "清场助手运行流程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/baozifei123/OneClickClose.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "b4419318b14d40cc51230e24d2f0f75dc6904120"
+    },
+    "output": ".archify/workflow-project-runtime-flow-20261120-101325/project-runtime-flow.html"
+  },
+  "lanes": [
+    { "id": "entry", "label": "进程入口" },
+    { "id": "app", "label": "主窗体运行链" },
+    { "id": "service", "label": "扫描与关闭服务" },
+    { "id": "shell", "label": "托盘与进程生命周期" }
+  ],
+  "phases": [
+    { "id": "startup", "label": "单实例启动", "fromCol": 0, "toCol": 1 },
+    { "id": "initialize", "label": "窗体初始化", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "operate", "label": "扫描、操作与退出", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": [
+    "launch",
+    "single_instance",
+    "load_config",
+    "main_form",
+    "shown_check",
+    "scan",
+    "candidate_list",
+    "user_action",
+    "mode_check",
+    "execute",
+    "result"
+  ],
+  "nodes": [
+    {
+      "id": "launch",
+      "lane": "entry",
+      "col": 0,
+      "type": "external",
+      "icon": "start",
+      "label": "启动程序",
+      "sublabel": "STA WinForms；识别 --hidden",
+      "sources": [
+        { "path": "src/OneClickClose.App/Program.cs", "line": 14, "end_line": 30 }
+      ]
+    },
+    {
+      "id": "single_instance",
+      "lane": "entry",
+      "col": 1,
+      "type": "security",
+      "icon": "decision",
+      "label": "已有实例？",
+      "sublabel": "Mutex 单实例；事件唤醒",
+      "sources": [
+        { "path": "src/OneClickClose.App/Program.cs", "line": 32, "end_line": 56 }
+      ]
+    },
+    {
+      "id": "wake_existing",
+      "lane": "shell",
+      "col": 2,
+      "type": "messagebus",
+      "icon": "neutral",
+      "label": "唤醒已运行实例",
+      "sublabel": "发信号后退出",
+      "sources": [
+        { "path": "src/OneClickClose.App/Program.cs", "line": 41, "end_line": 56 }
+      ]
+    },
+    {
+      "id": "load_config",
+      "lane": "entry",
+      "col": 2,
+      "type": "backend",
+      "label": "首次实例加载配置",
+      "sublabel": "读取 config.json；迁移旧快捷方式",
+      "sources": [
+        { "path": "src/OneClickClose.App/Program.cs", "line": 58, "end_line": 69 }
+      ]
+    },
+    {
+      "id": "main_form",
+      "lane": "app",
+      "col": 2,
+      "type": "frontend",
+      "label": "构造并初始化主窗体",
+      "sublabel": "UI 初始化；关闭隐藏，托盘退出",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 122, "end_line": 152 },
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 154, "end_line": 163 },
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1980, "end_line": 2250 }
+      ]
+    },
+    {
+      "id": "shown_check",
+      "lane": "app",
+      "col": 4,
+      "yOffset": -200,
+      "type": "security",
+      "icon": "decision",
+      "label": "启动时隐藏？",
+      "sublabel": "正常启动刷新；--hidden 等待唤起",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 588, "end_line": 598 },
+        { "path": "src/OneClickClose.App/Program.cs", "line": 100, "end_line": 107 }
+      ]
+    },
+    {
+      "id": "scan",
+      "lane": "service",
+      "col": 4,
+      "yOffset": -200,
+      "type": "backend",
+      "icon": "active",
+      "label": "异步扫描并筛选进程",
+      "sublabel": "窗口模式；all 含后台 GUI",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 632, "end_line": 712 },
+        { "path": "src/OneClickClose.App/ProcessScanner.cs", "line": 36, "end_line": 50 },
+        { "path": "src/OneClickClose.App/ProcessScanner.cs", "line": 83, "end_line": 217 }
+      ]
+    },
+    {
+      "id": "candidate_list",
+      "lane": "app",
+      "col": 5,
+      "yOffset": -200,
+      "type": "frontend",
+      "label": "更新应用清单",
+      "sublabel": "保留勾选；保护项不选",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 786, "end_line": 868 }
+      ]
+    },
+    {
+      "id": "user_action",
+      "lane": "app",
+      "col": 5,
+      "yOffset": -70,
+      "type": "external",
+      "label": "选择应用 / 预演 / 关闭",
+      "sublabel": "可选窗口；热键关闭非保护项",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1053, "end_line": 1223 },
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1367, "end_line": 1413 },
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 2106, "end_line": 2156 }
+      ]
+    },
+    {
+      "id": "mode_check",
+      "lane": "app",
+      "col": 5,
+      "yOffset": 50,
+      "type": "security",
+      "icon": "decision",
+      "label": "模式与确认",
+      "sublabel": "窗口 WM_CLOSE；all 确认/取消",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1089, "end_line": 1125 }
+      ]
+    },
+    {
+      "id": "execute",
+      "lane": "service",
+      "col": 5,
+      "yOffset": 180,
+      "type": "backend",
+      "icon": "active",
+      "label": "CloseService 执行目标",
+      "sublabel": "复核身份；WM_CLOSE 或超时强杀",
+      "sources": [
+        { "path": "src/OneClickClose.App/CloseService.cs", "line": 97, "end_line": 179 },
+        { "path": "src/OneClickClose.App/CloseService.cs", "line": 443, "end_line": 589 },
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1134, "end_line": 1157 }
+      ]
+    },
+    {
+      "id": "result",
+      "lane": "app",
+      "col": 5,
+      "yOffset": 300,
+      "type": "frontend",
+      "icon": "success",
+      "label": "回填结果并返回清单",
+      "sublabel": "回填处理状态",
+      "sources": [
+        { "path": "src/OneClickClose.App/MainForm.cs", "line": 1145, "end_line": 1167 }
+      ]
+    }
+  ],
+  "edges": [
+    { "id": "launch-single", "from": "launch", "to": "single_instance", "role": "main" },
+    { "id": "single-existing", "from": "single_instance", "to": "wake_existing", "label": "已有实例", "role": "branch" },
+    { "id": "single-first", "from": "single_instance", "to": "load_config", "label": "首次启动", "role": "main" },
+    { "id": "config-form", "from": "load_config", "to": "main_form", "role": "main" },
+    { "id": "form-shown", "from": "main_form", "to": "shown_check", "role": "main" },
+    { "id": "shown-scan", "from": "shown_check", "to": "scan", "label": "正常显示", "role": "main" },
+    { "id": "scan-candidates", "from": "scan", "to": "candidate_list", "label": "扫描完成", "role": "main" },
+    { "id": "list-action", "from": "candidate_list", "to": "user_action", "role": "main" },
+    { "id": "action-targets", "from": "user_action", "to": "mode_check", "label": "关闭所选目标", "role": "main" },
+    { "id": "mode-execute", "from": "mode_check", "to": "execute", "label": "windows 直接 / all 确认后", "role": "main" },
+    { "id": "execute-result", "from": "execute", "to": "result", "role": "main" }
+  ]
+}

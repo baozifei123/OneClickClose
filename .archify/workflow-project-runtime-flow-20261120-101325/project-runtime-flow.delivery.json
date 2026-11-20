@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e739e6a1-6a0b-4833-a8e3-82f5686296cc",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "E:\\code\\一键关闭项目\\.claude\\worktrees\\workflow-runtime-diagram\\.archify\\workflow-project-runtime-flow-20261120-101325\\candidate.json",
+  "output": "E:\\code\\一键关闭项目\\.claude\\worktrees\\workflow-runtime-diagram\\.archify\\workflow-project-runtime-flow-20261120-101325\\project-runtime-flow.html",
+  "specification": {
+    "sha256": "e830a84ec916f8efb9b7fd56dc2181bb245c7f45e485e629b8ca018bc2d504e0",
+    "bytes": 7299
+  },
+  "artifact": {
+    "sha256": "9e1c0dced1c8674081e26d2df5a033e8e1f8334df597d17149513628a5210fb0",
+    "bytes": 833724
+  }
+}
